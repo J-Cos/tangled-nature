@@ -28,6 +28,7 @@ pub struct Config {
     pub stress_r: f64,
     pub stress_duration: usize,
     pub stress_cells: Option<Vec<usize>>,  // explicit cell indices, or None for central 4
+    pub stress_ramp: usize,               // ramp mode: stress 1 more cell every N gens (0=disabled)
 }
 
 impl Config {
@@ -58,6 +59,7 @@ impl Config {
             stress_r: 0.0,
             stress_duration: 0,
             stress_cells: None,
+            stress_ramp: 0,
         }
     }
 
@@ -96,6 +98,7 @@ impl Config {
                         s.split(',').map(|x| x.trim().parse::<usize>().expect("Invalid cell index")).collect()
                     );
                 }
+                "--stress-ramp" => config.stress_ramp = parse_next(&args, &mut i)?,
                 other => return Err(format!("Unknown argument: {}", other)),
             }
             i += 1;

@@ -8,6 +8,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use rand::Rng;
+use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 use rayon::prelude::*;
@@ -36,6 +37,10 @@ pub struct SpatialGrid {
     stress_cells: Vec<usize>,     // indices of stressed patches
     original_r: f64,              // R before stress was applied
     stress_applied: bool,
+    // Ramp stressor
+    stress_ramp: usize,           // interval (gens) between adding each new stressed cell
+    stress_ramp_order: Vec<usize>, // shuffled order of cells to stress
+    stress_ramp_count: usize,      // how many cells have been stressed so far
 }
 
 #[derive(Clone)]
@@ -94,6 +99,13 @@ impl SpatialGrid {
             stress_cells,
             original_r: base_config.r,
             stress_applied: false,
+            stress_ramp: base_config.stress_ramp,
+            stress_ramp_order: {
+                let mut order: Vec<usize> = (0..n_patches).collect();
+                order.shuffle(&mut ChaCha12Rng::seed_from_u64(base_config.seed + 777));
+                order
+            },
+            stress_ramp_count: 0,
         }
     }
 
@@ -128,6 +140,14 @@ impl SpatialGrid {
             stress_cells,
             original_r: config.r,
             stress_applied: false,
+            stress_ramp: config.stress_ramp,
+            stress_ramp_order: {
+                let n = state.grid_w * state.grid_h;
+                let mut order: Vec<usize> = (0..n).collect();
+                order.shuffle(&mut ChaCha12Rng::seed_from_u64(config.seed + 777));
+                order
+            },
+            stress_ramp_count: 0,
         }
     }
 
@@ -297,14 +317,31 @@ impl SpatialGrid {
             let migrations = self.collect_migrations();
             self.apply_migrations(&migrations);
 
-            // Phase 2.5: Stress release check
-            if self.stress_applied && gens_elapsed == self.stress_duration {
+            // Phase 2.5: Stress release check (press mode)
+            if self.stress_applied && self.stress_duration > 0 && gens_elapsed == self.stress_duration {
                 eprintln!(
                     "  STRESS RELEASED at gen {} (after {} gens of stress). Restoring R={:.1}",
                     gen, self.stress_duration, self.original_r
                 );
                 for &idx in &self.stress_cells {
                     self.patches[idx].config.r = self.original_r;
+                }
+            }
+
+            // Phase 2.6: Ramp stress — add one more cell every stress_ramp gens
+            if self.stress_ramp > 0 && self.stress_r > 0.0
+                && gens_elapsed % self.stress_ramp == 0
+                && self.stress_ramp_count < self.stress_ramp_order.len()
+            {
+                let cell_idx = self.stress_ramp_order[self.stress_ramp_count];
+                self.patches[cell_idx].config.r = self.stress_r;
+                self.stress_ramp_count += 1;
+                let n_total = self.stress_ramp_order.len();
+                if self.stress_ramp_count % 10 == 0 || self.stress_ramp_count == n_total {
+                    eprintln!(
+                        "  RAMP: {}/{} cells stressed at gen {} (latest: cell {})",
+                        self.stress_ramp_count, n_total, gen, cell_idx
+                    );
                 }
             }
 
