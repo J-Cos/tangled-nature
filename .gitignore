@@ -1,4 +1,20 @@
 /target
+/reference/target
 /simlog/species_*
 j_*
 .DS_Store
+__pycache__/
+
+# Generated data files (not tracked)
+*.jsonl
+*.log
+*.csv
+states/
+states_*/
+*.json
+!Cargo.lock
+
+# Generated figures (regenerated from code)
+Figure_*.png
+Figure_*.pdf
+full_log.txt

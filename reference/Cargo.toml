@@ -1,0 +1,11 @@
+[package]
+name = "tangled-nature-original"
+version = "0.1.0"
+authors = ["hr1015"]
+edition = "2018"
+
+[profile.dev]
+opt-level = 3
+
+[dependencies]
+rand = "0.7.3"
