@@ -30,6 +30,12 @@ pub struct SpatialGrid {
     migration_rng: ChaCha12Rng,
     qess_n: QessDetector,
     qess_gamma: QessDetector,
+    // Press stressor
+    stress_r: f64,
+    stress_duration: usize,
+    stress_cells: Vec<usize>,     // indices of stressed patches
+    original_r: f64,              // R before stress was applied
+    stress_applied: bool,
 }
 
 #[derive(Clone)]
@@ -66,6 +72,9 @@ impl SpatialGrid {
 
         let migration_rng = ChaCha12Rng::seed_from_u64(base_config.seed + 999_999);
 
+        let stress_cells = base_config.stress_cells.clone()
+            .unwrap_or_else(|| Self::compute_central_cells(grid_w, grid_h));
+
         SpatialGrid {
             patches,
             grid_w,
@@ -80,6 +89,11 @@ impl SpatialGrid {
             qess_n: QessDetector::new(base_config.qess_window, base_config.qess_threshold),
             // γ-diversity is inherently noisier; use 2× threshold
             qess_gamma: QessDetector::new(base_config.qess_window, base_config.qess_threshold * 2.0),
+            stress_r: base_config.stress_r,
+            stress_duration: base_config.stress_duration,
+            stress_cells,
+            original_r: base_config.r,
+            stress_applied: false,
         }
     }
 
@@ -93,6 +107,9 @@ impl SpatialGrid {
             let sim = Simulation::from_patch_state(patch_config, j_engine.clone(), ps.species, ps.rng);
             patches.push(sim);
         }
+        let stress_cells = config.stress_cells.clone()
+            .unwrap_or_else(|| Self::compute_central_cells(state.grid_w, state.grid_h));
+
         SpatialGrid {
             patches,
             grid_w: state.grid_w,
@@ -106,7 +123,25 @@ impl SpatialGrid {
             migration_rng: state.migration_rng,
             qess_n: QessDetector::new(config.qess_window, config.qess_threshold),
             qess_gamma: QessDetector::new(config.qess_window, config.qess_threshold * 2.0),
+            stress_r: config.stress_r,
+            stress_duration: config.stress_duration,
+            stress_cells,
+            original_r: config.r,
+            stress_applied: false,
         }
+    }
+
+    /// Compute the indices of the central 4 cells in a W×H grid.
+    fn compute_central_cells(w: usize, h: usize) -> Vec<usize> {
+        let cx = w / 2;
+        let cy = h / 2;
+        let mut cells = Vec::new();
+        for dy in [cy - 1, cy] {
+            for dx in [cx - 1, cx] {
+                cells.push(dy * w + dx);
+            }
+        }
+        cells
     }
 
     /// Export current grid state for persistence.
@@ -236,6 +271,18 @@ impl SpatialGrid {
 
         let mut qess_reached = false;
 
+        // Apply stress at the start if configured
+        if self.stress_duration > 0 && self.stress_r > 0.0 && !self.stress_applied {
+            eprintln!(
+                "  STRESS: applying R={:.1} to {} central cells for {} gens (cells: {:?})",
+                self.stress_r, self.stress_cells.len(), self.stress_duration, self.stress_cells
+            );
+            for &idx in &self.stress_cells {
+                self.patches[idx].config.r = self.stress_r;
+            }
+            self.stress_applied = true;
+        }
+
         while self.generation < target_gen {
             self.generation += 1;
             let gen = self.generation;
@@ -249,6 +296,17 @@ impl SpatialGrid {
             // Phase 2: Migration (sequential — requires cross-patch access)
             let migrations = self.collect_migrations();
             self.apply_migrations(&migrations);
+
+            // Phase 2.5: Stress release check
+            if self.stress_applied && gens_elapsed == self.stress_duration {
+                eprintln!(
+                    "  STRESS RELEASED at gen {} (after {} gens of stress). Restoring R={:.1}",
+                    gen, self.stress_duration, self.original_r
+                );
+                for &idx in &self.stress_cells {
+                    self.patches[idx].config.r = self.original_r;
+                }
+            }
 
             // Phase 3: qESS detection on total N AND γ-diversity
             let total_n: u64 = self.patches.iter().map(|p| p.n).sum();

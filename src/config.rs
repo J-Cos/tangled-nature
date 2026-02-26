@@ -24,6 +24,10 @@ pub struct Config {
     pub grid_size: usize,
     pub p_move: f64,
     pub out_file: String,
+    // Press stressor (spatial only)
+    pub stress_r: f64,
+    pub stress_duration: usize,
+    pub stress_cells: Option<Vec<usize>>,  // explicit cell indices, or None for central 4
 }
 
 impl Config {
@@ -51,6 +55,9 @@ impl Config {
             grid_size: 10,
             p_move: 0.01,
             out_file: "spatial_output.jsonl".to_string(),
+            stress_r: 0.0,
+            stress_duration: 0,
+            stress_cells: None,
         }
     }
 
@@ -81,6 +88,14 @@ impl Config {
                 "--grid-size" => config.grid_size = parse_next(&args, &mut i)?,
                 "--p-move" => config.p_move = parse_next(&args, &mut i)?,
                 "--out" => config.out_file = parse_next_str(&args, &mut i)?,
+                "--stress-r" => config.stress_r = parse_next(&args, &mut i)?,
+                "--stress-duration" => config.stress_duration = parse_next(&args, &mut i)?,
+                "--stress-cells" => {
+                    let s = parse_next_str(&args, &mut i)?;
+                    config.stress_cells = Some(
+                        s.split(',').map(|x| x.trim().parse::<usize>().expect("Invalid cell index")).collect()
+                    );
+                }
                 other => return Err(format!("Unknown argument: {}", other)),
             }
             i += 1;
