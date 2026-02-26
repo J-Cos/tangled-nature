@@ -31,9 +31,11 @@ def load_data(fname):
 
 
 def pick_time_points(snapshots):
-    """Pick snapshots at gen 0, ~1/3, ~2/3, and final generation."""
+    """Pick snapshots at initial, ~1/3, ~2/3, and final generation."""
+    min_gen = min(s["gen"] for s in snapshots)
     max_gen = max(s["gen"] for s in snapshots)
-    targets = [0, max_gen // 3, 2 * max_gen // 3, max_gen]
+    span = max_gen - min_gen
+    targets = [min_gen, min_gen + span // 3, min_gen + 2 * span // 3, max_gen]
     result = []
     for t in targets:
         best = min(snapshots, key=lambda s: abs(s["gen"] - t))
