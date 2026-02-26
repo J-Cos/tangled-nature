@@ -100,11 +100,10 @@ impl SpatialGrid {
             original_r: base_config.r,
             stress_applied: false,
             stress_ramp: base_config.stress_ramp,
-            stress_ramp_order: {
-                let mut order: Vec<usize> = (0..n_patches).collect();
-                order.shuffle(&mut ChaCha12Rng::seed_from_u64(base_config.seed + 777));
-                order
-            },
+            stress_ramp_order: Self::compute_contagion_order(
+                grid_w, grid_h, base_config.stress_sigma,
+                &mut ChaCha12Rng::seed_from_u64(base_config.seed + 777),
+            ),
             stress_ramp_count: 0,
         }
     }
@@ -141,12 +140,10 @@ impl SpatialGrid {
             original_r: config.r,
             stress_applied: false,
             stress_ramp: config.stress_ramp,
-            stress_ramp_order: {
-                let n = state.grid_w * state.grid_h;
-                let mut order: Vec<usize> = (0..n).collect();
-                order.shuffle(&mut ChaCha12Rng::seed_from_u64(config.seed + 777));
-                order
-            },
+            stress_ramp_order: Self::compute_contagion_order(
+                state.grid_w, state.grid_h, config.stress_sigma,
+                &mut ChaCha12Rng::seed_from_u64(config.seed + 777),
+            ),
             stress_ramp_count: 0,
         }
     }
@@ -162,6 +159,97 @@ impl SpatialGrid {
             }
         }
         cells
+    }
+
+    /// Pre-compute stress order via distance-weighted contagion.
+    ///
+    /// Picks a random seed cell, then iteratively selects the next cell
+    /// with probability ∝ exp(-d_min² / 2σ²), where d_min is the Euclidean
+    /// distance to the nearest already-stressed cell.
+    /// σ controls spread: small σ = tight clusters, large σ = more diffuse.
+    /// At σ=0, falls back to uniform random selection.
+    fn compute_contagion_order(w: usize, h: usize, sigma: f64, rng: &mut ChaCha12Rng) -> Vec<usize> {
+        let n = w * h;
+        if n == 0 { return vec![]; }
+
+        // σ=0: fall back to shuffled random order (no spatial autocorrelation)
+        if sigma <= 0.0 {
+            let mut order: Vec<usize> = (0..n).collect();
+            order.shuffle(rng);
+            return order;
+        }
+
+        let two_sigma_sq = 2.0 * sigma * sigma;
+
+        // Cell coordinates
+        let coords: Vec<(f64, f64)> = (0..n)
+            .map(|i| ((i % w) as f64, (i / w) as f64))
+            .collect();
+
+        let mut order = Vec::with_capacity(n);
+        let mut stressed = vec![false; n];
+        let mut min_dist_sq = vec![f64::INFINITY; n]; // distance² to nearest stressed cell
+
+        // Pick random seed
+        let seed = rng.gen_range(0..n);
+        order.push(seed);
+        stressed[seed] = true;
+
+        // Update min_dist_sq from seed
+        let (sx, sy) = coords[seed];
+        for i in 0..n {
+            if !stressed[i] {
+                let dx = coords[i].0 - sx;
+                let dy = coords[i].1 - sy;
+                let dsq = dx * dx + dy * dy;
+                if dsq < min_dist_sq[i] {
+                    min_dist_sq[i] = dsq;
+                }
+            }
+        }
+
+        // Iteratively select remaining cells
+        for _ in 1..n {
+            // Compute weights for unstressed cells
+            let mut weights: Vec<(usize, f64)> = Vec::new();
+            let mut total_weight = 0.0;
+            for i in 0..n {
+                if !stressed[i] {
+                    let w = (-min_dist_sq[i] / two_sigma_sq).exp();
+                    weights.push((i, w));
+                    total_weight += w;
+                }
+            }
+
+            // Weighted random selection
+            let mut r = rng.gen::<f64>() * total_weight;
+            let mut chosen = weights[0].0;
+            for &(idx, w) in &weights {
+                r -= w;
+                if r <= 0.0 {
+                    chosen = idx;
+                    break;
+                }
+            }
+
+            order.push(chosen);
+            stressed[chosen] = true;
+
+            // Update min_dist_sq from newly stressed cell
+            let (cx, cy) = coords[chosen];
+            for i in 0..n {
+                if !stressed[i] {
+                    let dx = coords[i].0 - cx;
+                    let dy = coords[i].1 - cy;
+                    let dsq = dx * dx + dy * dy;
+                    if dsq < min_dist_sq[i] {
+                        min_dist_sq[i] = dsq;
+                    }
+                }
+            }
+        }
+
+        order
     }
 
     /// Export current grid state for persistence.
