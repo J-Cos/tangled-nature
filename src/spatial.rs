@@ -39,6 +39,7 @@ pub struct SpatialGrid {
     stress_applied: bool,
     // Ramp stressor
     stress_ramp: usize,           // interval (gens) between adding each new stressed cell
+    stress_ramp_before: usize,     // gens of baseline before ramp starts
     stress_ramp_order: Vec<usize>, // shuffled order of cells to stress
     stress_ramp_count: usize,      // how many cells have been stressed so far
     no_viz: bool,
@@ -112,6 +113,7 @@ impl SpatialGrid {
             original_r: base_config.r,
             stress_applied: false,
             stress_ramp: base_config.stress_ramp,
+            stress_ramp_before: base_config.stress_ramp_before,
             stress_ramp_order: Self::compute_contagion_order(
                 grid_w, grid_h, base_config.stress_sigma,
                 &mut ChaCha12Rng::seed_from_u64(base_config.seed + 777),
@@ -153,6 +155,7 @@ impl SpatialGrid {
             original_r: config.r,
             stress_applied: false,
             stress_ramp: config.stress_ramp,
+            stress_ramp_before: config.stress_ramp_before,
             stress_ramp_order: Self::compute_contagion_order(
                 state.grid_w, state.grid_h, config.stress_sigma,
                 &mut ChaCha12Rng::seed_from_u64(config.seed + 777),
@@ -406,6 +409,20 @@ impl SpatialGrid {
             gamma
         );
 
+        // Report ramp timeline if active
+        if self.stress_ramp > 0 && self.stress_r > 0.0 {
+            let ramp_duration = n_patches * self.stress_ramp;
+            let ramp_start = start_gen + self.stress_ramp_before;
+            let ramp_end = ramp_start + ramp_duration;
+            eprintln!(
+                "  RAMP PROTOCOL: baseline gens {}-{} | ramp {}-{} (R {:.1} → {:.2}, {} cells over {} gens) | hold {}-{}",
+                start_gen, ramp_start,
+                ramp_start, ramp_end,
+                self.original_r, self.stress_r, n_patches, ramp_duration,
+                ramp_end, target_gen
+            );
+        }
+
         // Prepare output file
         let mut out = BufWriter::new(File::create(&self.out_file).expect("Failed to create out_file"));
 
@@ -452,9 +469,10 @@ impl SpatialGrid {
             }
 
             // Phase 2.6: Ramp stress — stress 1% of cells every stress_ramp gens
-            //           (always completes in ~100 intervals = 10,000 gens at default ramp=100)
+            //           Waits stress_ramp_before gens before starting
             if self.stress_ramp > 0 && self.stress_r > 0.0
-                && gens_elapsed % self.stress_ramp == 0
+                && gens_elapsed >= self.stress_ramp_before
+                && (gens_elapsed - self.stress_ramp_before) % self.stress_ramp == 0
                 && self.stress_ramp_count < self.stress_ramp_order.len()
             {
                 let n_total = self.stress_ramp_order.len();

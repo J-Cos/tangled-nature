@@ -29,6 +29,8 @@ pub struct Config {
     pub stress_duration: usize,
     pub stress_cells: Option<Vec<usize>>,  // explicit cell indices, or None for central 4
     pub stress_ramp: usize,               // ramp mode: stress 1 more cell every N gens (0=disabled)
+    pub stress_ramp_before: usize,        // gens of baseline before ramp starts (default 5000)
+    pub stress_ramp_after: usize,         // gens of hold after ramp completes (default 5000)
     pub stress_sigma: f64,                // contagion spread parameter (grid units)
     pub no_viz: bool,
     pub independent_init: bool,  // each patch gets its own random species pool
@@ -63,6 +65,8 @@ impl Config {
             stress_duration: 0,
             stress_cells: None,
             stress_ramp: 0,
+            stress_ramp_before: 5000,
+            stress_ramp_after: 5000,
             stress_sigma: 2.0,
             no_viz: false,
             independent_init: false,
@@ -105,6 +109,8 @@ impl Config {
                     );
                 }
                 "--stress-ramp" => config.stress_ramp = parse_next(&args, &mut i)?,
+                "--stress-ramp-before" => config.stress_ramp_before = parse_next(&args, &mut i)?,
+                "--stress-ramp-after" => config.stress_ramp_after = parse_next(&args, &mut i)?,
                 "--stress-sigma" => config.stress_sigma = parse_next(&args, &mut i)?,
                 "--no-viz" => config.no_viz = true,
                 "--independent-init" => config.independent_init = true,
