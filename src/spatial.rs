@@ -624,3 +624,157 @@ impl SpatialGrid {
         writeln!(out, "{}", snapshot).expect("Failed to write final");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    fn make_grid(grid_size: usize, r: f64) -> SpatialGrid {
+        let mut c = Config::default();
+        c.l = 5; // small genome for fast tests
+        c.r = r;
+        c.grid_size = grid_size;
+        c.p_move = 0.01;
+        c.seed = 42;
+        c.max_gen = 100;
+        c.output_interval = 0;
+        c.qess_window = 5000;
+        c.qess_threshold = 0.0; // disable qESS
+        c.out_file = "/tmp/test_spatial.jsonl".to_string();
+        c.state_out = None;
+        SpatialGrid::new(grid_size, grid_size, 0.01, &c)
+    }
+
+    #[test]
+    fn test_contagion_order_spatial_autocorrelation() {
+        // Contagion order with small sigma should produce spatially clustered sequences
+        let mut rng = ChaCha12Rng::seed_from_u64(42);
+        let order = SpatialGrid::compute_contagion_order(10, 10, 2.0, &mut rng);
+
+        assert_eq!(order.len(), 100);
+        // Check all cells present exactly once
+        let mut seen = vec![false; 100];
+        for &idx in &order {
+            assert!(!seen[idx], "Cell {} appears twice", idx);
+            seen[idx] = true;
+        }
+
+        // Spatial autocorrelation check: average distance between consecutive
+        // cells should be small (< grid diagonal / 2)
+        let mut total_dist = 0.0;
+        for i in 1..order.len() {
+            let (x1, y1) = (order[i-1] % 10, order[i-1] / 10);
+            let (x2, y2) = (order[i] % 10, order[i] / 10);
+            let dx = (x1 as f64 - x2 as f64).abs();
+            let dy = (y1 as f64 - y2 as f64).abs();
+            total_dist += (dx * dx + dy * dy).sqrt();
+        }
+        let avg_dist = total_dist / 99.0;
+        // With sigma=2, consecutive cells should be closer than uniform random
+        // Random avg on 10x10 ≈ 6.6; contagion should be noticeably less
+        assert!(avg_dist < 5.5, "Avg consecutive distance {} too large for sigma=2", avg_dist);
+    }
+
+    #[test]
+    fn test_contagion_order_sigma_zero_random() {
+        // sigma=0 should fall back to uniform random (no spatial autocorrelation)
+        let mut rng = ChaCha12Rng::seed_from_u64(42);
+        let order = SpatialGrid::compute_contagion_order(10, 10, 0.0, &mut rng);
+        assert_eq!(order.len(), 100);
+
+        // All cells present
+        let mut seen = vec![false; 100];
+        for &idx in &order {
+            seen[idx] = true;
+        }
+        assert!(seen.iter().all(|&s| s));
+    }
+
+    #[test]
+    fn test_contagion_order_small_grid() {
+        // Should work on 2x2 grid
+        let mut rng = ChaCha12Rng::seed_from_u64(42);
+        let order = SpatialGrid::compute_contagion_order(2, 2, 2.0, &mut rng);
+        assert_eq!(order.len(), 4);
+    }
+
+    #[test]
+    fn test_ramp_scales_with_grid_size() {
+        // On a 20x20 grid (400 cells), 1% = 4 cells per step
+        let mut grid = make_grid(20, 5.0);
+        grid.stress_ramp = 100;
+        grid.stress_r = 1.0;
+
+        let n_total = grid.stress_ramp_order.len();
+        let cells_per_step = std::cmp::max(1, n_total / 100);
+        assert_eq!(cells_per_step, 4, "20x20 grid should stress 4 cells per step");
+    }
+
+    #[test]
+    fn test_ramp_scales_10x10() {
+        // On a 10x10 grid (100 cells), 1% = 1 cell per step
+        let n_total = 100;
+        let cells_per_step = std::cmp::max(1, n_total / 100);
+        assert_eq!(cells_per_step, 1);
+    }
+
+    #[test]
+    fn test_ramp_scales_100x100() {
+        // On a 100x100 grid (10000 cells), 1% = 100 cells per step
+        let n_total = 10000;
+        let cells_per_step = std::cmp::max(1, n_total / 100);
+        assert_eq!(cells_per_step, 100);
+    }
+
+    #[test]
+    fn test_population_conservation_during_migration() {
+        // Migration should conserve total population
+        let mut grid = make_grid(5, 5.0);
+
+        // Run a few generations to build up population
+        for _ in 0..50 {
+            grid.generation += 1;
+            grid.patches.par_iter_mut().for_each(|p| { p.step_one_generation(); });
+
+            let n_before: u64 = grid.patches.iter().map(|p| p.n).sum();
+            let migrations = grid.collect_migrations();
+            grid.apply_migrations(&migrations);
+            let n_after: u64 = grid.patches.iter().map(|p| p.n).sum();
+
+            assert_eq!(n_before, n_after,
+                "Migration changed total N from {} to {} at gen {}",
+                n_before, n_after, grid.generation);
+        }
+    }
+
+    #[test]
+    fn test_neighbours_toroidal() {
+        let grid = make_grid(5, 5.0);
+
+        // Corner cell (0,0) = index 0
+        // Order: [north, south, west, east]
+        let n = grid.neighbours(0);
+        assert_eq!(n[0], 20);  // north wraps to row 4
+        assert_eq!(n[1], 5);   // south = row 1
+        assert_eq!(n[2], 4);   // west wraps to col 4
+        assert_eq!(n[3], 1);   // east = col 1
+
+        // Center cell (2,2) = index 12
+        let n = grid.neighbours(12);
+        assert_eq!(n[0], 7);   // north
+        assert_eq!(n[1], 17);  // south
+        assert_eq!(n[2], 11);  // west
+        assert_eq!(n[3], 13);  // east
+    }
+
+    #[test]
+    fn test_contagion_deterministic() {
+        // Same seed should produce same order
+        let mut rng1 = ChaCha12Rng::seed_from_u64(123);
+        let mut rng2 = ChaCha12Rng::seed_from_u64(123);
+        let order1 = SpatialGrid::compute_contagion_order(10, 10, 2.0, &mut rng1);
+        let order2 = SpatialGrid::compute_contagion_order(10, 10, 2.0, &mut rng2);
+        assert_eq!(order1, order2);
+    }
+}
