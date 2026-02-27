@@ -41,6 +41,7 @@ pub struct SpatialGrid {
     stress_ramp: usize,           // interval (gens) between adding each new stressed cell
     stress_ramp_order: Vec<usize>, // shuffled order of cells to stress
     stress_ramp_count: usize,      // how many cells have been stressed so far
+    no_viz: bool,
 }
 
 #[derive(Clone)]
@@ -63,16 +64,27 @@ impl SpatialGrid {
         let n_patches = grid_w * grid_h;
         let mut patches = Vec::with_capacity(n_patches);
 
-        // Create one base simulation to generate the universal JEngine & initial species pool
+        // Create one base simulation to generate the universal JEngine
         let base_sim = Simulation::new(base_config.clone());
 
         for i in 0..n_patches {
-            let mut patch_sim = base_sim.clone();
-            // Each patch gets its own RNG sequence for stochastic events (death, reproduction, mutation)
-            patch_sim.rng = ChaCha12Rng::seed_from_u64(base_config.seed + i as u64 * 97);
-            // Also give each patch a unique config.seed to match its RNG
-            patch_sim.config.seed = base_config.seed + i as u64 * 97;
-            patches.push(patch_sim);
+            let patch_seed = base_config.seed + i as u64 * 97;
+            if base_config.independent_init {
+                // Each patch gets its own random initial species pool
+                let mut patch_config = base_config.clone();
+                patch_config.seed = patch_seed;
+                let mut patch_sim = Simulation::new(patch_config);
+                // Share the same JEngine (interaction matrix) across all patches
+                patch_sim.j_engine = base_sim.j_engine.clone();
+                patch_sim.rebuild_h_cache();
+                patches.push(patch_sim);
+            } else {
+                // All patches start with identical species (cloned from base)
+                let mut patch_sim = base_sim.clone();
+                patch_sim.rng = ChaCha12Rng::seed_from_u64(patch_seed);
+                patch_sim.config.seed = patch_seed;
+                patches.push(patch_sim);
+            }
         }
 
         let migration_rng = ChaCha12Rng::seed_from_u64(base_config.seed + 999_999);
@@ -105,6 +117,7 @@ impl SpatialGrid {
                 &mut ChaCha12Rng::seed_from_u64(base_config.seed + 777),
             ),
             stress_ramp_count: 0,
+            no_viz: base_config.no_viz,
         }
     }
 
@@ -145,6 +158,7 @@ impl SpatialGrid {
                 &mut ChaCha12Rng::seed_from_u64(config.seed + 777),
             ),
             stress_ramp_count: 0,
+            no_viz: config.no_viz,
         }
     }
 
@@ -529,7 +543,8 @@ impl SpatialGrid {
             }
         }
 
-        // Run Python visualization
+        // Run Python visualization (skip if --no-viz)
+        if !self.no_viz {
         eprintln!("  Generating visualizations...");
         let out = &self.out_file;
         for script in &["spatial_viz.py", "spatial_viz2.py"] {
@@ -543,6 +558,7 @@ impl SpatialGrid {
             }
         }
         eprintln!("  Visualization complete!");
+        } // end if !self.no_viz
 
         qess_reached
     }
@@ -777,5 +793,117 @@ mod tests {
         let order1 = SpatialGrid::compute_contagion_order(10, 10, 2.0, &mut rng1);
         let order2 = SpatialGrid::compute_contagion_order(10, 10, 2.0, &mut rng2);
         assert_eq!(order1, order2);
+    }
+
+    #[test]
+    fn test_shared_init_identical_patches() {
+        // Without independent_init, all patches should start with identical species
+        let mut c = Config::default();
+        c.l = 5;
+        c.r = 5.0;
+        c.grid_size = 4;
+        c.p_move = 0.01;
+        c.seed = 42;
+        c.independent_init = false;
+        c.max_gen = 100;
+        c.output_interval = 0;
+        c.qess_window = 5000;
+        c.qess_threshold = 0.0;
+        c.out_file = "/tmp/test_shared_init.jsonl".to_string();
+        c.state_out = None;
+
+        let grid = SpatialGrid::new(4, 4, 0.01, &c);
+
+        // All patches should have the same species set (genomes)
+        let species_0: std::collections::BTreeSet<u64> =
+            grid.patches[0].species.keys().cloned().collect();
+        for (i, patch) in grid.patches.iter().enumerate() {
+            let species_i: std::collections::BTreeSet<u64> =
+                patch.species.keys().cloned().collect();
+            assert_eq!(species_0, species_i,
+                "Patch {} has different species than patch 0 with shared init", i);
+        }
+    }
+
+    #[test]
+    fn test_independent_init_diverse_patches() {
+        // With independent_init, patches should start with different species
+        let mut c = Config::default();
+        c.l = 10;  // larger genome space for diversity
+        c.r = 5.0;
+        c.grid_size = 4;
+        c.p_move = 0.01;
+        c.seed = 42;
+        c.independent_init = true;
+        c.max_gen = 100;
+        c.output_interval = 0;
+        c.qess_window = 5000;
+        c.qess_threshold = 0.0;
+        c.out_file = "/tmp/test_indep_init.jsonl".to_string();
+        c.state_out = None;
+
+        let grid = SpatialGrid::new(4, 4, 0.01, &c);
+
+        // At least some patches should have different species sets
+        let species_0: std::collections::BTreeSet<u64> =
+            grid.patches[0].species.keys().cloned().collect();
+        let mut any_different = false;
+        for patch in &grid.patches[1..] {
+            let species_i: std::collections::BTreeSet<u64> =
+                patch.species.keys().cloned().collect();
+            if species_0 != species_i {
+                any_different = true;
+                break;
+            }
+        }
+        assert!(any_different,
+            "With independent_init, at least some patches should have different species");
+    }
+
+    #[test]
+    fn test_independent_init_shared_j_engine() {
+        // Both init modes should share the same JEngine across all patches
+        let mut c = Config::default();
+        c.l = 5;
+        c.r = 5.0;
+        c.grid_size = 3;
+        c.p_move = 0.01;
+        c.seed = 42;
+        c.max_gen = 100;
+        c.output_interval = 0;
+        c.qess_window = 5000;
+        c.qess_threshold = 0.0;
+        c.out_file = "/tmp/test_j_engine.jsonl".to_string();
+        c.state_out = None;
+
+        // Test with independent_init
+        c.independent_init = true;
+        let grid_indep = SpatialGrid::new(3, 3, 0.01, &c);
+
+        // All patches should have the same J values for test genomes
+        let test_genomes: Vec<u64> = vec![0, 1, 5, 15, 31];
+        for g1 in &test_genomes {
+            for g2 in &test_genomes {
+                let j_ref = grid_indep.patches[0].j_engine.compute(*g1, *g2);
+                for (i, patch) in grid_indep.patches.iter().enumerate() {
+                    let j_i = patch.j_engine.compute(*g1, *g2);
+                    assert!((j_ref - j_i).abs() < 1e-15,
+                        "Patch {} JEngine differs for genomes ({}, {}): {} vs {}",
+                        i, g1, g2, j_ref, j_i);
+                }
+            }
+        }
+
+        // Test with shared init — J should also be uniform
+        c.independent_init = false;
+        let grid_shared = SpatialGrid::new(3, 3, 0.01, &c);
+        for g1 in &test_genomes {
+            for g2 in &test_genomes {
+                let j_ref = grid_shared.patches[0].j_engine.compute(*g1, *g2);
+                let j_indep = grid_indep.patches[0].j_engine.compute(*g1, *g2);
+                assert!((j_ref - j_indep).abs() < 1e-15,
+                    "Shared vs independent JEngine differs for ({}, {})", g1, g2);
+            }
+        }
     }
 }

@@ -6,9 +6,10 @@ A high-performance Rust implementation of the [Tangled Nature Model](https://iop
 
 - **Single-patch TNM** — classic well-mixed Tangled Nature dynamics
 - **Spatial mode** — 2D grid of coupled patches with nearest-neighbour migration
+- **Independent initialization** — `--independent-init` gives each patch its own random species pool (shared JEngine)
 - **qESS detection** — automatic detection of quasi-Evolutionary Stable States via CV of total N and γ-diversity
 - **State save/load** — checkpoint at qESS, fork into stress scenarios from identical starting conditions
-- **Visualization** — automated multi-panel figures via `spatial_viz.py`
+- **Visualization** — automated multi-panel figures via `spatial_viz.py` and `spatial_viz2.py`
 - **Deterministic** — seeded `ChaCha12Rng` for full reproducibility
 
 ## Quick Start
@@ -58,27 +59,29 @@ The primary workflow is to run a spatial metacommunity to qESS, checkpoint it, t
 
 ## CLI Parameters
 
-| Flag                | Default                | Description                                         |
-| ------------------- | ---------------------- | --------------------------------------------------- |
-| `--seed`            | system time            | RNG seed for reproducibility                        |
-| `--l`               | 10                     | Genome length (bits); `2^L` possible genomes        |
-| `--n-init`          | 100                    | Initial population per patch                        |
-| `--max-gen`         | 200000                 | Maximum generations to run                          |
-| `--theta`           | 0.25                   | J matrix sparsity (fraction of non-zero entries)    |
-| `--p-kill`          | 0.2                    | Per-step kill probability                           |
-| `--w`               | 33.0                   | Interaction weight in fitness function              |
-| `--r`               | 143.0                  | Carrying capacity (stress target)                   |
-| `--p-mut`           | 0.001                  | Mutation rate per locus per reproduction            |
-| `--output-interval` | 100                    | Generations between JSONL snapshots                 |
-| `--qess-window`     | 5000                   | Rolling window for qESS CV calculation              |
-| `--qess-threshold`  | 0.05                   | CV threshold for qESS detection                     |
-| `--state-in`        | —                      | Load simulation state from JSON checkpoint          |
-| `--state-out`       | —                      | Save state to JSON when qESS is reached             |
-| `--output-j`        | false                  | Dump J matrix to stdout                             |
-| `--spatial`         | false                  | Enable spatial metacommunity mode                   |
-| `--grid-size`       | 10                     | Grid width and height (grid is square)              |
-| `--p-move`          | 0.01                   | Per-individual migration probability per generation |
-| `--out`             | `spatial_output.jsonl` | Output JSONL file path                              |
+| Flag                 | Default                | Description                                         |
+| -------------------- | ---------------------- | --------------------------------------------------- |
+| `--seed`             | system time            | RNG seed for reproducibility                        |
+| `--l`                | 10                     | Genome length (bits); `2^L` possible genomes        |
+| `--n-init`           | 100                    | Initial population per patch                        |
+| `--max-gen`          | 200000                 | Maximum generations to run                          |
+| `--theta`            | 0.25                   | J matrix sparsity (fraction of non-zero entries)    |
+| `--p-kill`           | 0.2                    | Per-step kill probability                           |
+| `--w`                | 33.0                   | Interaction weight in fitness function              |
+| `--r`                | 143.0                  | Carrying capacity (stress target)                   |
+| `--p-mut`            | 0.001                  | Mutation rate per locus per reproduction            |
+| `--output-interval`  | 100                    | Generations between JSONL snapshots                 |
+| `--qess-window`      | 5000                   | Rolling window for qESS CV calculation              |
+| `--qess-threshold`   | 0.05                   | CV threshold for qESS detection                     |
+| `--state-in`         | —                      | Load simulation state from JSON checkpoint          |
+| `--state-out`        | —                      | Save state to JSON when qESS is reached             |
+| `--output-j`         | false                  | Dump J matrix to stdout                             |
+| `--spatial`          | false                  | Enable spatial metacommunity mode                   |
+| `--grid-size`        | 10                     | Grid width and height (grid is square)              |
+| `--p-move`           | 0.01                   | Per-individual migration probability per generation |
+| `--independent-init` | false                  | Each patch gets its own random initial species pool |
+| `--no-viz`           | false                  | Skip auto-visualization after spatial runs          |
+| `--out`              | `spatial_output.jsonl` | Output JSONL file path                              |
 
 ## Fitness Function
 
@@ -123,16 +126,17 @@ The `--state-out` file captures the complete simulation state:
 
 ## Visualization
 
-The `spatial_viz.py` script generates comprehensive multi-panel figures:
+Two visualization scripts generate comprehensive figures:
 
 ```bash
-# Standalone (reads the most recent JSONL in pwd)
+# Spatial structure & diversity (auto-invoked unless --no-viz)
 python3 spatial_viz.py burnin.jsonl
 
-# Auto-invoked at end of spatial runs
+# Species-level analysis + TaNa genome heatmap
+python3 spatial_viz2.py burnin.jsonl
 ```
 
-**Figure layout (4×4 grid):**
+**`spatial_viz.py` — Figure layout (4×4 grid):**
 
 | Row | Panels                                                                            |
 | --- | --------------------------------------------------------------------------------- |
@@ -140,6 +144,16 @@ python3 spatial_viz.py burnin.jsonl
 | 2   | S (richness) heatmaps at 4 time points                                            |
 | 3   | Time series: Total N · α diversity · γ diversity · β diversity                    |
 | 4   | Final state: N histogram · S histogram · N–S scatter · Spatial heterogeneity (CV) |
+
+**`spatial_viz2.py` — Species analysis (3 rows × 4 cols + TaNa heatmap):**
+
+| Row | Panels                                                               |
+| --- | -------------------------------------------------------------------- |
+| 1   | Top-4 species density maps across the spatial grid (final state)     |
+| 2   | Patch-level SAD at 4 time points (rank-abundance with IQR)           |
+| 3   | Landscape SAD (log-log rank-abundance) · Species occupancy over time |
+
+Additionally generates a standalone **TaNa heatmap** (`Figure_SpatialTNM_tana.png`) showing all observed genomes (y-axis, ordered by first appearance) × time (x-axis) with log-scale abundance coloring. Use `--output-interval 1` for maximum temporal resolution.
 
 ## Source Layout
 
@@ -155,7 +169,7 @@ src/
 
 ## Tests
 
-### Rust unit tests (13 tests)
+### Rust unit tests (25 tests)
 
 ```bash
 cargo test
@@ -163,9 +177,10 @@ cargo test
 
 Tests cover:
 - **Config**: default values, L range validation
-- **JEngine**: deterministic J matrix generation, J symmetry
-- **Simulation**: population growth, reproduction probability, qESS detection, mutation range, state roundtrip with h_cache verification
+- **JEngine**: deterministic J matrix generation, J symmetry, finite values
+- **Simulation**: population growth, reproduction probability, qESS detection, mutation range, state roundtrip with h_cache verification, weighted sampling
 - **State**: JSON serialization roundtrip for `SimState`
+- **Spatial**: toroidal neighbours, population conservation during migration, contagion stress ordering, ramp scaling, independent init (shared vs diverse patches, JEngine consistency)
 
 ### Python integration tests
 

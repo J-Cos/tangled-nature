@@ -99,10 +99,10 @@ def main():
     # Pick 4 temporal snapshots
     time_snaps = pick_time_points(snapshots)
 
-    # ── Figure layout: 3 rows × 4 cols ────────────────────────────
-    fig = plt.figure(figsize=(20, 15))
+    # ── Figure 2: Species analysis (3 rows × 4 cols) ──────────────
+    fig = plt.figure(figsize=(20, 16))
     gs = gridspec.GridSpec(3, 4, hspace=0.4, wspace=0.35,
-                           height_ratios=[1, 1, 1.2])
+                           height_ratios=[1, 1, 1])
 
     # ── Row 1: Top-4 species density maps (final snapshot) ────────
     landscape_ab = get_landscape_abundance(last)
@@ -127,9 +127,7 @@ def main():
         ax = fig.add_subplot(gs[1, col])
         sads = get_patch_sads(snap)
         if sads:
-            # Plot all patch SADs as light lines, median as bold
             max_rank = max(len(s) for s in sads)
-            # Aggregate: for each rank, collect abundances
             rank_data = defaultdict(list)
             for sad in sads:
                 for rank, count in enumerate(sad):
@@ -151,24 +149,9 @@ def main():
             ax.set_title(f"Gen {snap['gen']}\nPatch SAD", fontsize=9)
             ax.grid(True, alpha=0.2)
 
-    # ── Row 3: Advanced panels ────────────────────────────────────
+    # ── Row 3: SAD + Occupancy panels ─────────────────────────────
 
-    # Panel 3a: Genome × Time heatmap (TaNa-style) — ALL 2^L possible genomes
-    ax_tana = fig.add_subplot(gs[2, 0:2])  # span 2 columns
-
-    # Get L from snapshot data
-    L = snapshots[0].get("l", None)
-    if L is None:
-        # Infer from max genome ID
-        max_genome = max(
-            max(int(g) for g in snap["patches"][0].get("species", {}).keys())
-            for snap in snapshots if snap["patches"][0].get("species", {})
-        )
-        L = max(1, int(np.ceil(np.log2(max_genome + 1))))
-
-    n_genomes = 2 ** L
-
-    # Collect landscape abundances per snapshot
+    # Collect landscape abundances for time series
     gen_abundances = []
     gens_list = []
     for snap in snapshots:
@@ -176,35 +159,8 @@ def main():
         gen_abundances.append(ab)
         gens_list.append(snap["gen"])
 
-    n_gens = len(gens_list)
-
-    # Build full heatmap: 2^L rows × n_gens columns
-    heatmap = np.zeros((n_genomes, n_gens))
-    for t, ab in enumerate(gen_abundances):
-        for g, c in ab.items():
-            if 0 <= g < n_genomes:
-                heatmap[g, t] = c
-
-    # Plot with log color scale
-    if heatmap.max() > 0:
-        # Mask zeros for log scale
-        masked = np.ma.masked_where(heatmap == 0, heatmap)
-        im = ax_tana.imshow(
-            masked, aspect="auto", cmap="hot",
-            norm=LogNorm(vmin=1, vmax=max(heatmap.max(), 2)),
-            interpolation="nearest",
-            extent=[gens_list[0], gens_list[-1], n_genomes, 0]
-        )
-        ax_tana.set_facecolor("black")
-        plt.colorbar(im, ax=ax_tana, fraction=0.02, pad=0.02, label="Abundance")
-
-    ax_tana.set_xlabel("Generation")
-    ax_tana.set_ylabel(f"Genome ID (0–{n_genomes-1})")
-    ax_tana.set_title(f"All {n_genomes} possible species (L={L})",
-                      fontweight="bold", fontsize=11, loc="left")
-
-    # Panel 3c: Landscape SAD (final, log-log rank-abundance)
-    ax_lsad = fig.add_subplot(gs[2, 2])
+    # Panel 3a-b: Landscape SAD (final, log-log rank-abundance)
+    ax_lsad = fig.add_subplot(gs[2, 0:2])
     landscape_counts = sorted(landscape_ab.values(), reverse=True)
     ranks = np.arange(1, len(landscape_counts) + 1)
     ax_lsad.scatter(ranks, landscape_counts, s=15, c="#D6604D",
@@ -217,11 +173,10 @@ def main():
                       fontweight="bold", fontsize=10, loc="left")
     ax_lsad.grid(True, alpha=0.2)
 
-    # Panel 3d: Species occupancy over time
-    ax_occ = fig.add_subplot(gs[2, 3])
+    # Panel 3c-d: Species occupancy over time
+    ax_occ = fig.add_subplot(gs[2, 2:4])
     n_species_over_time = [len(ab) for ab in gen_abundances]
 
-    # Also track how many species occupy >10% of patches
     n_patches = grid_w * grid_h
     widespread = []
     for snap in snapshots:
@@ -244,15 +199,68 @@ def main():
     ax_occ.legend(fontsize=8)
     ax_occ.grid(True, alpha=0.2)
 
-    # ── Suptitle ──────────────────────────────────────────────────
     fig.suptitle(
         f"Spatial TNM Species Analysis: {grid_w}×{grid_h} Grid",
         fontsize=15, fontweight="bold", y=0.99
     )
 
-    plt.savefig("Figure_SpatialTNM_species.png", dpi=200, bbox_inches="tight")
+    plt.savefig("Figure_SpatialTNM_species.png", dpi=300, bbox_inches="tight")
     plt.savefig("Figure_SpatialTNM_species.pdf", dpi=300, bbox_inches="tight")
     print("✓ Figure_SpatialTNM_species.png / .pdf saved")
+    plt.close(fig)
+
+    # ── Figure 3: TaNa heatmap (standalone, observed genomes only) ─
+    # Build ordered list of genomes by first appearance
+    genome_first_seen = {}  # genome_id → first time index
+    for t, ab in enumerate(gen_abundances):
+        for g in ab:
+            if g not in genome_first_seen:
+                genome_first_seen[g] = t
+
+    # Sort genomes by first appearance time
+    ordered_genomes = sorted(genome_first_seen.keys(),
+                             key=lambda g: genome_first_seen[g])
+    genome_to_row = {g: row for row, g in enumerate(ordered_genomes)}
+    n_observed = len(ordered_genomes)
+    n_gens = len(gens_list)
+
+    # Build compact heatmap: n_observed rows × n_gens columns
+    heatmap = np.zeros((n_observed, n_gens))
+    for t, ab in enumerate(gen_abundances):
+        for g, c in ab.items():
+            if g in genome_to_row:
+                heatmap[genome_to_row[g], t] = c
+
+    # Scale figure height to number of observed genomes
+    fig_h = max(6, min(20, n_observed * 0.04 + 2))
+    fig_tana = plt.figure(figsize=(14, fig_h))
+    ax_tana = fig_tana.add_subplot(111)
+
+    if heatmap.max() > 0:
+        # 'hot' colormap: black → red → yellow → white
+        # abundance=1 is dark red, blending with absent (black)
+        masked = np.ma.masked_where(heatmap == 0, heatmap)
+        im = ax_tana.imshow(
+            masked, aspect="auto", cmap="hot",
+            norm=LogNorm(vmin=1, vmax=max(heatmap.max(), 2)),
+            interpolation="none",
+            extent=[gens_list[0], gens_list[-1], n_observed, 0]
+        )
+        ax_tana.set_facecolor("black")
+        plt.colorbar(im, ax=ax_tana, fraction=0.02, pad=0.02,
+                     label="Abundance")
+
+    ax_tana.set_xlabel("Generation", fontsize=12)
+    ax_tana.set_ylabel("Species (ordered by first appearance)", fontsize=12)
+    ax_tana.set_title(
+        f"TaNa Genome × Time — {n_observed} observed species",
+        fontweight="bold", fontsize=13
+    )
+
+    plt.savefig("Figure_SpatialTNM_tana.png", dpi=300, bbox_inches="tight")
+    plt.savefig("Figure_SpatialTNM_tana.pdf", dpi=300, bbox_inches="tight")
+    print("✓ Figure_SpatialTNM_tana.png / .pdf saved")
+    plt.close(fig_tana)
 
 
 if __name__ == "__main__":
