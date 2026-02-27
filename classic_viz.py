@@ -155,17 +155,21 @@ def main():
     print("✓ Figure_ClassicTNM.png / .pdf saved")
     plt.close(fig)
 
-    # ── Figure 2: TaNa genome × time heatmap ──────────────────────────
+    # ── Figure 2: Full 2^L genome heatmap (paper-style, Jensen 2025) ──
     # Build genome abundances per snapshot
     gen_abundances = []
     gens_list = []
     has_species = False
+    genome_first_seen = {}
     for snap in snapshots:
         if "species" in snap:
             has_species = True
             ab = {}
             for genome, count in snap["species"]:
-                ab[int(genome)] = count
+                g = int(genome)
+                ab[g] = count
+                if g not in genome_first_seen:
+                    genome_first_seen[g] = len(gen_abundances)
             gen_abundances.append(ab)
             gens_list.append(snap["gen"])
 
@@ -174,29 +178,21 @@ def main():
         print("  Rerun with --out <file> to include species data.")
         return
 
-    # Build ordered list of genomes by first appearance
-    genome_first_seen = {}
-    for t, ab in enumerate(gen_abundances):
-        for g in ab:
-            if g not in genome_first_seen:
-                genome_first_seen[g] = t
-
-    ordered_genomes = sorted(genome_first_seen.keys(),
-                             key=lambda g: genome_first_seen[g])
-    genome_to_row = {g: row for row, g in enumerate(ordered_genomes)}
-    n_observed = len(ordered_genomes)
+    n_observed = len(genome_first_seen)
     n_gens = len(gens_list)
 
-    # Build compact heatmap
-    heatmap = np.zeros((n_observed, n_gens))
+    # Y-axis = all possible genome IDs (0 to 2^L - 1)
+    max_genome = max(genome_first_seen.keys())
+    L = max(max_genome.bit_length(), 1)
+    n_possible = 2 ** L
+
+    heatmap = np.zeros((n_possible, n_gens))
     for t, ab in enumerate(gen_abundances):
         for g, c in ab.items():
-            if g in genome_to_row:
-                heatmap[genome_to_row[g], t] = c
+            if 0 <= g < n_possible:
+                heatmap[g, t] = c
 
-    # Scale figure height
-    fig_h = max(6, min(20, n_observed * 0.04 + 2))
-    fig_tana = plt.figure(figsize=(14, fig_h))
+    fig_tana = plt.figure(figsize=(14, 8))
     ax_tana = fig_tana.add_subplot(111)
 
     if heatmap.max() > 0:
@@ -205,61 +201,23 @@ def main():
             masked, aspect="auto", cmap="hot",
             norm=LogNorm(vmin=1, vmax=max(heatmap.max(), 2)),
             interpolation="none",
-            extent=[gens_list[0], gens_list[-1], n_observed, 0]
+            extent=[gens_list[0], gens_list[-1], n_possible, 0]
         )
         ax_tana.set_facecolor("black")
         plt.colorbar(im, ax=ax_tana, fraction=0.02, pad=0.02, label="Abundance")
 
-    ax_tana.set_xlabel("Generation", fontsize=12)
-    ax_tana.set_ylabel("Species (ordered by first appearance)", fontsize=12)
+    ax_tana.set_xlabel("Time (generations)", fontsize=12)
+    ax_tana.set_ylabel("Species ID", fontsize=12)
     ax_tana.set_title(
-        f"TaNa Genome × Time — {n_observed} observed species",
-        fontweight="bold", fontsize=13
-    )
-
-    plt.savefig("Figure_ClassicTNM_tana.png", dpi=300, bbox_inches="tight")
-    plt.savefig("Figure_ClassicTNM_tana.pdf", dpi=300, bbox_inches="tight")
-    print(f"✓ Figure_ClassicTNM_tana.png / .pdf saved ({n_observed} species)")
-    plt.close(fig_tana)
-
-    # ── Figure 3: Full 2^L genome heatmap (paper-style, Jensen 2018) ──
-    # Y-axis = all possible genome IDs (0 to 2^L - 1)
-    max_genome = max(genome_first_seen.keys())
-    L = max(max_genome.bit_length(), 1)
-    n_possible = 2 ** L
-
-    heatmap_full = np.zeros((n_possible, n_gens))
-    for t, ab in enumerate(gen_abundances):
-        for g, c in ab.items():
-            if 0 <= g < n_possible:
-                heatmap_full[g, t] = c
-
-    fig_full = plt.figure(figsize=(14, 8))
-    ax_full = fig_full.add_subplot(111)
-
-    if heatmap_full.max() > 0:
-        masked_full = np.ma.masked_where(heatmap_full == 0, heatmap_full)
-        im_full = ax_full.imshow(
-            masked_full, aspect="auto", cmap="hot",
-            norm=LogNorm(vmin=1, vmax=max(heatmap_full.max(), 2)),
-            interpolation="none",
-            extent=[gens_list[0], gens_list[-1], n_possible, 0]
-        )
-        ax_full.set_facecolor("black")
-        plt.colorbar(im_full, ax=ax_full, fraction=0.02, pad=0.02, label="Abundance")
-
-    ax_full.set_xlabel("Time (generations)", fontsize=12)
-    ax_full.set_ylabel("Species ID", fontsize=12)
-    ax_full.set_title(
         f"TaNa Evolution — L={L}, 2$^{{{L}}}$ = {n_possible} possible species, "
         f"{n_observed} observed",
         fontweight="bold", fontsize=13
     )
 
-    plt.savefig("Figure_ClassicTNM_full.png", dpi=300, bbox_inches="tight")
-    plt.savefig("Figure_ClassicTNM_full.pdf", dpi=300, bbox_inches="tight")
-    print(f"✓ Figure_ClassicTNM_full.png / .pdf saved (L={L}, {n_possible} rows)")
-    plt.close(fig_full)
+    plt.savefig("Figure_ClassicTNM_tana.png", dpi=300, bbox_inches="tight")
+    plt.savefig("Figure_ClassicTNM_tana.pdf", dpi=300, bbox_inches="tight")
+    print(f"✓ Figure_ClassicTNM_tana.png / .pdf saved (L={L}, {n_observed} observed)")
+    plt.close(fig_tana)
 
 
 if __name__ == "__main__":

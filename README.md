@@ -2,6 +2,8 @@
 
 A high-performance Rust implementation of the [Tangled Nature Model](https://iopscience.iop.org/article/10.1088/1361-6404/aaee8f/meta) (Jensen 2018), extended with a spatial metacommunity grid, qESS-based burn-in, and state save/load for fork-and-stress experiments.
 
+The J matrix uses the dense independent-random-entry approach matching the original reference implementation: `J[i][k]` and `J[k][i]` are sampled independently from `U(-1,1)` with probability Θ.
+
 ## Features
 
 - **Single-patch TNM** — classic well-mixed Tangled Nature dynamics
@@ -9,7 +11,7 @@ A high-performance Rust implementation of the [Tangled Nature Model](https://iop
 - **Independent initialization** — `--independent-init` gives each patch its own random species pool (shared JEngine)
 - **qESS detection** — automatic detection of quasi-Evolutionary Stable States via CV of total N and γ-diversity
 - **State save/load** — checkpoint at qESS, fork into stress scenarios from identical starting conditions
-- **Visualization** — automated multi-panel figures via `spatial_viz.py` and `spatial_viz2.py`
+- **Visualization** — automated multi-panel figures via `classic_viz.py` (single-patch) and `spatial_viz.py` / `spatial_viz2.py` (spatial)
 - **Deterministic** — seeded `ChaCha12Rng` for full reproducibility
 
 ## Quick Start
@@ -85,7 +87,7 @@ The primary workflow is to run a spatial metacommunity to qESS, checkpoint it, t
 
 ## Fitness Function
 
-Following Arthur et al. (MNRAS 2024):
+Following Jensen (2018):
 
 ```
 p_off(i) = σ( W · H(i)/N − N/R )
@@ -120,23 +122,35 @@ The `--state-out` file captures the complete simulation state:
 - `grid_w`, `grid_h`: grid dimensions
 - `p_move`: migration probability
 - `l`: genome length
-- `j_locus_matrices`: full J matrix (locus-level 2×2 matrices)
+- `j_dense`: full dense J matrix (`2^L × 2^L` independent entries)
 - `patch_states[]`: per-patch species composition (`BTreeMap<genome_id, count>`), RNG state, and seed
 - `migration_rng`: migration RNG state
 
 ## Visualization
 
-Two visualization scripts generate comprehensive figures:
+Three visualization scripts generate comprehensive figures:
 
 ```bash
-# Spatial structure & diversity (auto-invoked unless --no-viz)
+# Single-patch dynamics + TaNa heatmap (auto-invoked unless --no-viz)
+python3 classic_viz.py output.jsonl
+
+# Spatial structure & diversity (auto-invoked for spatial runs)
 python3 spatial_viz.py burnin.jsonl
 
-# Species-level analysis + TaNa genome heatmap
+# Species-level analysis
 python3 spatial_viz2.py burnin.jsonl
 ```
 
-**`spatial_viz.py` — Figure layout (4×4 grid):**
+**`classic_viz.py` — Single-patch analysis (2×3 grid + TaNa heatmap):**
+
+| Row | Panels                                                    |
+| --- | --------------------------------------------------------- |
+| 1   | N time series · S time series · SAD (rank-abundance)      |
+| 2   | N histogram · Phase space (N vs S) · Population stability |
+
+Plus a standalone **TaNa heatmap** (`Figure_ClassicTNM_tana.png`) showing all `2^L` possible genomes (y-axis) × time (x-axis) with log-scale abundance coloring (paper-style, Jensen 2018).
+
+**`spatial_viz.py` — Spatial structure (4×4 grid):**
 
 | Row | Panels                                                                            |
 | --- | --------------------------------------------------------------------------------- |
@@ -145,15 +159,13 @@ python3 spatial_viz2.py burnin.jsonl
 | 3   | Time series: Total N · α diversity · γ diversity · β diversity                    |
 | 4   | Final state: N histogram · S histogram · N–S scatter · Spatial heterogeneity (CV) |
 
-**`spatial_viz2.py` — Species analysis (3 rows × 4 cols + TaNa heatmap):**
+**`spatial_viz2.py` — Species analysis (3 rows × 4 cols):**
 
 | Row | Panels                                                               |
 | --- | -------------------------------------------------------------------- |
 | 1   | Top-4 species density maps across the spatial grid (final state)     |
 | 2   | Patch-level SAD at 4 time points (rank-abundance with IQR)           |
 | 3   | Landscape SAD (log-log rank-abundance) · Species occupancy over time |
-
-Additionally generates a standalone **TaNa heatmap** (`Figure_SpatialTNM_tana.png`) showing all observed genomes (y-axis, ordered by first appearance) × time (x-axis) with log-scale abundance coloring. Use `--output-interval 1` for maximum temporal resolution.
 
 ## Source Layout
 
@@ -211,8 +223,12 @@ Nearest-neighbour migration on a 2D grid with periodic (toroidal) boundaries:
 
 ### Interaction Matrix
 
-The J matrix is built from `L` independent 2×2 locus matrices (θ-sparse), giving `J(a,b) = Σ_k M_k[a_k][b_k]` where `a_k` is bit `k` of genome `a`. This allows O(L) computation and compact serialization.
+The J matrix is a dense `2^L × 2^L` matrix where each off-diagonal pair `J[i][k]` and `J[k][i]` is sampled independently from `U(-1,1)` with probability Θ (otherwise zero). This matches the reference implementation exactly and gives O(1) lookup with ~8 MB memory for L=10.
 
 ## Citation
 
 Jensen, H. J. (2018). *The Tangled Nature Model*. European Journal of Physics, 39(6), 064002.
+
+## Reference Implementation
+
+The `reference/` directory contains the original Rust port by Clem von Stengel (2020), used to validate output equivalence.
