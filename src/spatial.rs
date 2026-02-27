@@ -590,6 +590,7 @@ impl SpatialGrid {
         let snapshot = serde_json::json!({
             "type": "spatial_snapshot",
             "gen": gen,
+            "l": self.patches[0].config.l,
             "total_n": total_n,
             "mean_n": total_n as f64 / n_patches as f64,
             "total_s": total_s,

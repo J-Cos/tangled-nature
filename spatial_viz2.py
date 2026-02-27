@@ -153,71 +153,54 @@ def main():
 
     # ── Row 3: Advanced panels ────────────────────────────────────
 
-    # Panel 3a: Genome × Time heatmap (TaNa-style)
+    # Panel 3a: Genome × Time heatmap (TaNa-style) — ALL 2^L possible genomes
     ax_tana = fig.add_subplot(gs[2, 0:2])  # span 2 columns
 
-    # Collect all genomes that ever appear and their abundances over time
-    all_genomes = set()
+    # Get L from snapshot data
+    L = snapshots[0].get("l", None)
+    if L is None:
+        # Infer from max genome ID
+        max_genome = max(
+            max(int(g) for g in snap["patches"][0].get("species", {}).keys())
+            for snap in snapshots if snap["patches"][0].get("species", {})
+        )
+        L = max(1, int(np.ceil(np.log2(max_genome + 1))))
+
+    n_genomes = 2 ** L
+
+    # Collect landscape abundances per snapshot
     gen_abundances = []
     gens_list = []
     for snap in snapshots:
         ab = get_landscape_abundance(snap)
-        all_genomes.update(ab.keys())
         gen_abundances.append(ab)
         gens_list.append(snap["gen"])
 
-    # Sort genomes by first appearance time, then by genome ID
-    genome_first_gen = {}
-    for i, ab in enumerate(gen_abundances):
-        for g in ab:
-            if g not in genome_first_gen:
-                genome_first_gen[g] = i
-
-    sorted_genomes = sorted(all_genomes, key=lambda g: (genome_first_gen[g], g))
-
-    # Build heatmap matrix
     n_gens = len(gens_list)
-    n_genomes = len(sorted_genomes)
-    genome_idx = {g: i for i, g in enumerate(sorted_genomes)}
 
-    # Limit to genomes with meaningful presence (appeared in >1 snapshot)
-    genome_presence = defaultdict(int)
-    for ab in gen_abundances:
-        for g in ab:
-            genome_presence[g] += 1
-    persistent = [g for g in sorted_genomes if genome_presence[g] > 1]
-
-    if len(persistent) > 500:
-        # Take top 500 by total abundance if too many
-        total_ab = defaultdict(int)
-        for ab in gen_abundances:
-            for g, c in ab.items():
-                total_ab[g] += c
-        persistent = sorted(persistent, key=lambda g: -total_ab[g])[:500]
-        persistent.sort(key=lambda g: (genome_first_gen[g], g))
-
-    heatmap = np.zeros((len(persistent), n_gens))
-    pidx = {g: i for i, g in enumerate(persistent)}
+    # Build full heatmap: 2^L rows × n_gens columns
+    heatmap = np.zeros((n_genomes, n_gens))
     for t, ab in enumerate(gen_abundances):
         for g, c in ab.items():
-            if g in pidx:
-                heatmap[pidx[g], t] = c
+            if 0 <= g < n_genomes:
+                heatmap[g, t] = c
 
     # Plot with log color scale
     if heatmap.max() > 0:
+        # Mask zeros for log scale
+        masked = np.ma.masked_where(heatmap == 0, heatmap)
         im = ax_tana.imshow(
-            heatmap, aspect="auto", cmap="hot",
+            masked, aspect="auto", cmap="hot",
             norm=LogNorm(vmin=1, vmax=max(heatmap.max(), 2)),
             interpolation="nearest",
-            extent=[gens_list[0], gens_list[-1], len(persistent), 0]
+            extent=[gens_list[0], gens_list[-1], n_genomes, 0]
         )
-        # Mask zeros for visibility 
         ax_tana.set_facecolor("black")
         plt.colorbar(im, ax=ax_tana, fraction=0.02, pad=0.02, label="Abundance")
 
     ax_tana.set_xlabel("Generation")
-    ax_tana.set_ylabel(f"Species (n={len(persistent)})")
-    ax_tana.set_title("Genome × Time (TaNa heatmap)",
+    ax_tana.set_ylabel(f"Genome ID (0–{n_genomes-1})")
+    ax_tana.set_title(f"All {n_genomes} possible species (L={L})",
                       fontweight="bold", fontsize=11, loc="left")
 
     # Panel 3c: Landscape SAD (final, log-log rank-abundance)
