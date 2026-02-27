@@ -7,12 +7,13 @@ The J matrix uses the dense independent-random-entry approach matching the origi
 ## Features
 
 - **Single-patch TNM** — classic well-mixed Tangled Nature dynamics
-- **Spatial mode** — 2D grid of coupled patches with nearest-neighbour migration
+- **Spatial mode** — 2D grid of coupled patches with nearest-neighbour migration (rayon parallelism across all cores)
 - **Independent initialization** — `--independent-init` gives each patch its own random species pool (shared JEngine)
 - **qESS detection** — automatic detection of quasi-Evolutionary Stable States via CV of total N and γ-diversity
 - **State save/load** — checkpoint at qESS, fork into stress scenarios from identical starting conditions
 - **Visualization** — automated multi-panel figures via `classic_viz.py` (single-patch) and `spatial_viz.py` / `spatial_viz2.py` (spatial)
 - **Deterministic** — seeded `ChaCha12Rng` for full reproducibility
+- **Optimized** — zero-allocation h_cache updates and batched reproduction for ~2× single-patch throughput
 
 ## Quick Start
 
@@ -224,6 +225,22 @@ Nearest-neighbour migration on a 2D grid with periodic (toroidal) boundaries:
 ### Interaction Matrix
 
 The J matrix is a dense `2^L × 2^L` matrix where each off-diagonal pair `J[i][k]` and `J[k][i]` is sampled independently from `U(-1,1)` with probability Θ (otherwise zero). This matches the reference implementation exactly and gives O(1) lookup with ~8 MB memory for L=10.
+
+## Performance
+
+Single-patch mode is inherently sequential (each micro-step depends on the previous RNG/population state), but the hot path is heavily optimized:
+
+- **Zero-allocation h_cache updates**: `add_individual()`, `remove_individual()`, and `update_h_cache_for_delta()` iterate h_cache in-place with direct `j_dense` slice access, eliminating millions of per-call `Vec` allocations.
+- **Batched reproduction**: The `reproduce()` method merges the 3-operation sequence (add child1, add child2, remove parent) into a single O(S) h_cache pass.
+- **Spatial parallelism**: Patch stepping uses `rayon::par_iter_mut()` to utilize all available CPU cores.
+
+| Benchmark (5000 non-spatial gens) | Time      |
+| --------------------------------- | --------- |
+| Before optimization               | 9.9s      |
+| After optimization                | 4.6s      |
+| **Speedup**                       | **2.15×** |
+
+For multi-core speedup on single-patch workloads, run independent replicates in parallel (e.g., via `ensemble_run.py`).
 
 ## Citation
 

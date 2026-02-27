@@ -267,28 +267,30 @@ impl Simulation {
     }
 
     /// Update h_cache after +delta individuals of genome `g` were added/removed.
+    /// Zero-allocation: iterates h_cache in-place using direct j_dense access.
     fn update_h_cache_for_delta(&mut self, g: u64, delta: i64) {
         let is_new = delta > 0 && !self.h_cache.contains_key(&g);
         // If g is a NEW species being added, compute its H[g] from scratch first.
-        // This must happen BEFORE the delta loop, which would create a partial
-        // entry via or_insert(0.0). The scratch computation uses the current
-        // species counts (which already include g's count=1 from add_individual).
         if is_new {
+            let j_dense = &*self.j_engine.j_dense;
+            let ng = self.j_engine.n_genomes;
             let mut h = 0.0;
             for (&gj, &nj) in &self.species {
-                h += self.j_engine.get_j(g, gj) * nj as f64;
+                h += j_dense[g as usize * ng + gj as usize] * nj as f64;
             }
             self.h_cache.insert(g, h);
         }
         // For every existing species i: H[i] += J(i, g) * delta
-        // Skip g if it was just computed from scratch (already includes its own count).
-        let genomes: Vec<u64> = self.h_cache.keys().cloned().collect();
-        for gi in &genomes {
-            if is_new && *gi == g {
+        // Direct j_dense access avoids borrow conflict with h_cache iter_mut.
+        let j_dense = &*self.j_engine.j_dense;
+        let ng = self.j_engine.n_genomes;
+        let g_idx = g as usize;
+        let delta_f = delta as f64;
+        for (&gi, h) in self.h_cache.iter_mut() {
+            if is_new && gi == g {
                 continue; // Already correct from scratch computation above
             }
-            let j_val = self.j_engine.get_j(*gi, g);
-            *self.h_cache.entry(*gi).or_insert(0.0) += j_val * delta as f64;
+            *h += j_dense[gi as usize * ng + g_idx] * delta_f;
         }
     }
 
@@ -312,12 +314,12 @@ impl Simulation {
         if is_new {
             self.update_h_cache_for_delta(genome, 1);
         } else {
-            // Pre-compute J values, then update h_cache (avoids borrow conflict)
-            let updates: Vec<(u64, f64)> = self.h_cache.keys()
-                .map(|&gi| (gi, self.j_engine.get_j(gi, genome)))
-                .collect();
-            for (gi, j_val) in updates {
-                *self.h_cache.entry(gi).or_insert(0.0) += j_val;
+            // In-place h_cache update — zero allocation
+            let j_dense = &*self.j_engine.j_dense;
+            let ng = self.j_engine.n_genomes;
+            let g_idx = genome as usize;
+            for (&gi, h) in self.h_cache.iter_mut() {
+                *h += j_dense[gi as usize * ng + g_idx];
             }
         }
     }
@@ -338,14 +340,12 @@ impl Simulation {
         if went_extinct {
             self.h_cache.remove(&genome);
         }
-        // Pre-compute J values, then update h_cache
-        let updates: Vec<(u64, f64)> = self.h_cache.keys()
-            .map(|&gi| (gi, self.j_engine.get_j(gi, genome)))
-            .collect();
-        for (gi, j_val) in updates {
-            if let Some(h) = self.h_cache.get_mut(&gi) {
-                *h -= j_val;
-            }
+        // In-place h_cache update — zero allocation
+        let j_dense = &*self.j_engine.j_dense;
+        let ng = self.j_engine.n_genomes;
+        let g_idx = genome as usize;
+        for (&gi, h) in self.h_cache.iter_mut() {
+            *h -= j_dense[gi as usize * ng + g_idx];
         }
     }
 
@@ -371,6 +371,72 @@ impl Simulation {
         mutant
     }
 
+    /// Batched reproduction: parent → child1 + child2, remove parent.
+    /// Merges 3 separate O(S) h_cache passes into 1.
+    fn reproduce(&mut self, parent: u64, child1: u64, child2: u64) {
+        // Update species counts first
+        let parent_extinct;
+        if let Some(count) = self.species.get_mut(&parent) {
+            *count -= 1;
+            parent_extinct = *count == 0;
+            if parent_extinct {
+                self.species.remove(&parent);
+            }
+        } else {
+            parent_extinct = false;
+        }
+        // Net population change: +2 children -1 parent = +1
+        self.n -= 1; // remove parent from n first
+
+        let c1_new = !self.species.contains_key(&child1);
+        *self.species.entry(child1).or_insert(0) += 1;
+        self.n += 1;
+
+        let c2_new = !self.species.contains_key(&child2);
+        *self.species.entry(child2).or_insert(0) += 1;
+        self.n += 1;
+
+        // Handle extinct parent
+        if parent_extinct {
+            self.h_cache.remove(&parent);
+        }
+
+        // Compute H from scratch for any NEW species
+        let j_dense = &*self.j_engine.j_dense;
+        let ng = self.j_engine.n_genomes;
+        if c1_new {
+            let mut h = 0.0;
+            for (&gj, &nj) in &self.species {
+                h += j_dense[child1 as usize * ng + gj as usize] * nj as f64;
+            }
+            self.h_cache.insert(child1, h);
+        }
+        if c2_new && child2 != child1 {
+            let mut h = 0.0;
+            for (&gj, &nj) in &self.species {
+                h += j_dense[child2 as usize * ng + gj as usize] * nj as f64;
+            }
+            self.h_cache.insert(child2, h);
+        }
+
+        // Single batched O(S) pass for all h_cache updates:
+        // net delta for each gi: +J(gi,child1) +J(gi,child2) -J(gi,parent)
+        let p_idx = parent as usize;
+        let c1_idx = child1 as usize;
+        let c2_idx = child2 as usize;
+        for (&gi, h) in self.h_cache.iter_mut() {
+            let gi_row = gi as usize * ng;
+            let delta = j_dense[gi_row + c1_idx]
+                + j_dense[gi_row + c2_idx]
+                - j_dense[gi_row + p_idx];
+            // Skip entries just computed from scratch
+            if (c1_new && gi == child1) || (c2_new && child2 != child1 && gi == child2) {
+                continue;
+            }
+            *h += delta;
+        }
+    }
+
     /// Run one generation (tau = N/p_kill micro-steps).
     /// Returns false if population went extinct.
     pub fn step_one_generation(&mut self) -> bool {
@@ -393,9 +459,7 @@ impl Simulation {
             if self.rng.gen::<f64>() < p_off {
                 let child1 = self.mutate(parent);
                 let child2 = self.mutate(parent);
-                self.add_individual(child1);
-                self.add_individual(child2);
-                self.remove_individual(parent);
+                self.reproduce(parent, child1, child2);
             }
         }
         self.generation += 1;
@@ -439,9 +503,7 @@ impl Simulation {
             if self.rng.gen::<f64>() < p_off {
                 let child1 = self.mutate(parent);
                 let child2 = self.mutate(parent);
-                self.add_individual(child1);
-                self.add_individual(child2);
-                self.remove_individual(parent);
+                self.reproduce(parent, child1, child2);
             }
 
             // --- Generation bookkeeping ---
