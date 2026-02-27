@@ -530,16 +530,19 @@ impl SpatialGrid {
         }
 
         // Run Python visualization
-        eprintln!("  Generating visualizations with spatial_viz.py...");
-        let status = Command::new("python3")
-            .arg("spatial_viz.py")
-            .arg(&self.out_file)
-            .status();
-        
-        match status {
-            Ok(s) if s.success() => eprintln!("  Visualization complete!"),
-            Ok(_) | Err(_) => eprintln!("  Warning: Failed to run spatial_viz.py"),
+        eprintln!("  Generating visualizations...");
+        let out = &self.out_file;
+        for script in &["spatial_viz.py", "spatial_viz2.py"] {
+            let status = Command::new("python3")
+                .arg(script)
+                .arg(out)
+                .status();
+            match status {
+                Ok(s) if s.success() => {},
+                Ok(_) | Err(_) => eprintln!("  Warning: Failed to run {}", script),
+            }
         }
+        eprintln!("  Visualization complete!");
 
         qess_reached
     }
@@ -563,17 +566,23 @@ impl SpatialGrid {
         let n_patches = self.patches.len();
         let (total_n, total_s, gamma) = self.aggregate_stats();
 
-        // Per-patch summary
+        // Per-patch summary (includes species composition for SAD/heatmap viz)
         let patch_data: Vec<serde_json::Value> = self
             .patches
             .iter()
             .enumerate()
             .map(|(i, p)| {
+                let species: std::collections::HashMap<String, u64> = p
+                    .species
+                    .iter()
+                    .map(|(&g, &c)| (g.to_string(), c))
+                    .collect();
                 serde_json::json!({
                     "x": i % self.grid_w,
                     "y": i / self.grid_w,
                     "n": p.n,
                     "s": p.species.len(),
+                    "species": species,
                 })
             })
             .collect();
