@@ -123,7 +123,7 @@ impl SpatialGrid {
 
     /// Reconstruct a SpatialGrid from a saved SpatialState.
     pub fn from_state(state: SpatialState, config: &Config) -> Self {
-        let j_engine = JEngine::from_matrices(state.l, state.j_locus_matrices);
+        let j_engine = JEngine::from_dense(state.l, state.j_dense);
         let mut patches = Vec::with_capacity(state.patch_states.len());
         for ps in state.patch_states {
             let mut patch_config = config.clone();
@@ -281,7 +281,7 @@ impl SpatialGrid {
             grid_h: self.grid_h,
             p_move: self.p_move,
             l: self.patches[0].config.l,
-            j_locus_matrices: (*self.patches[0].j_engine.locus_matrices).clone(),
+            j_dense: (*self.patches[0].j_engine.j_dense).clone(),
             patch_states,
             migration_rng: self.migration_rng.clone(),
         }
@@ -884,9 +884,9 @@ mod tests {
         let test_genomes: Vec<u64> = vec![0, 1, 5, 15, 31];
         for g1 in &test_genomes {
             for g2 in &test_genomes {
-                let j_ref = grid_indep.patches[0].j_engine.compute(*g1, *g2);
+                let j_ref = grid_indep.patches[0].j_engine.get_j(*g1, *g2);
                 for (i, patch) in grid_indep.patches.iter().enumerate() {
-                    let j_i = patch.j_engine.compute(*g1, *g2);
+                    let j_i = patch.j_engine.get_j(*g1, *g2);
                     assert!((j_ref - j_i).abs() < 1e-15,
                         "Patch {} JEngine differs for genomes ({}, {}): {} vs {}",
                         i, g1, g2, j_ref, j_i);
@@ -899,8 +899,8 @@ mod tests {
         let grid_shared = SpatialGrid::new(3, 3, 0.01, &c);
         for g1 in &test_genomes {
             for g2 in &test_genomes {
-                let j_ref = grid_shared.patches[0].j_engine.compute(*g1, *g2);
-                let j_indep = grid_indep.patches[0].j_engine.compute(*g1, *g2);
+                let j_ref = grid_shared.patches[0].j_engine.get_j(*g1, *g2);
+                let j_indep = grid_indep.patches[0].j_engine.get_j(*g1, *g2);
                 assert!((j_ref - j_indep).abs() < 1e-15,
                     "Shared vs independent JEngine differs for ({}, {})", g1, g2);
             }

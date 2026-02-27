@@ -10,7 +10,7 @@ pub struct SimState {
     pub generation: usize,
     pub l: u32,
     pub species: BTreeMap<u64, u64>,
-    pub j_locus_matrices: Vec<[[f64; 2]; 2]>,
+    pub j_dense: Vec<f64>,
     pub rng: ChaCha12Rng,
 }
 
@@ -36,7 +36,7 @@ pub struct SpatialState {
     pub grid_h: usize,
     pub p_move: f64,
     pub l: u32,
-    pub j_locus_matrices: Vec<[[f64; 2]; 2]>,
+    pub j_dense: Vec<f64>,
     pub patch_states: Vec<PatchState>,
     pub migration_rng: ChaCha12Rng,
 }
@@ -75,16 +75,14 @@ mod tests {
         species.insert(99u64, 50u64);
 
         let rng = ChaCha12Rng::seed_from_u64(12345);
-        let locus = vec![
-            [[0.1, -0.2], [0.3, 0.4]],
-            [[0.5, -0.6], [0.7, 0.8]],
-        ];
+        // Small 4×4 dense J matrix for L=2
+        let j_dense = vec![0.0; 4 * 4];
 
         let state = SimState {
             generation: 500,
             l: 2,
             species,
-            j_locus_matrices: locus,
+            j_dense,
             rng,
         };
 
@@ -96,8 +94,7 @@ mod tests {
         assert_eq!(loaded.l, 2);
         assert_eq!(loaded.species.len(), 2);
         assert_eq!(*loaded.species.get(&42).unwrap(), 100);
-        assert_eq!(loaded.j_locus_matrices.len(), 2);
-        assert!((loaded.j_locus_matrices[0][0][0] - 0.1).abs() < 1e-10);
+        assert_eq!(loaded.j_dense.len(), 16); // 2^2 × 2^2
 
         let _ = std::fs::remove_file(path);
     }

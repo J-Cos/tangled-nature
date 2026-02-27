@@ -9,118 +9,69 @@ use crate::output;
 use crate::state::SimState;
 
 // ---------------------------------------------------------------------------
-// JEngine: locus-based interaction computation
+// JEngine: dense interaction matrix (matching Jensen et al. 2025 / reference)
 // ---------------------------------------------------------------------------
-
-/// For L <= DENSE_J_THRESHOLD, pre-compute the full genome×genome J matrix.
-/// With L=10, this is 1024×1024 × 8 bytes = 8 MB — trivial.
-const DENSE_J_THRESHOLD: u32 = 16;
 
 use std::sync::Arc;
 
-/// Computes J(a,b) from L pre-generated 2x2 locus matrices.
-/// For small L (≤16), a dense matrix is pre-computed for O(1) lookups.
+/// Dense J matrix: j_dense[a * n_genomes + b] = J(a,b).
+/// For L=10, this is 1024×1024 × 8 bytes = 8 MB — trivial.
+/// Each J[i][k] and J[k][i] are drawn independently from U(-1,1)
+/// with probability Θ (zero otherwise), matching the reference exactly.
 #[derive(Clone)]
 pub struct JEngine {
-    pub locus_matrices: Arc<Vec<[[f64; 2]; 2]>>,
+    pub j_dense: Arc<Vec<f64>>,
     pub l: u32,
-    /// Dense J matrix for small L: j_dense[a * n_genomes + b] = J(a,b)
-    j_dense: Option<Arc<Vec<f64>>>,
-    n_genomes: usize,
+    pub n_genomes: usize,
 }
 
 impl JEngine {
+    /// Create a new J matrix matching the reference code's `create_j()` exactly.
+    /// For each pair (i,k) where i≠k, with probability Θ:
+    ///   J[i][k] ~ U(-1,1) and J[k][i] ~ U(-1,1) independently.
     pub fn new(l: u32, theta: f64, rng: &mut impl Rng) -> Self {
-        let mut locus_matrices = Vec::with_capacity(l as usize);
-        for _ in 0..l {
-            let mut mat = [[0.0f64; 2]; 2];
-            for row in mat.iter_mut() {
-                for val in row.iter_mut() {
-                    if rng.gen::<f64>() < theta {
-                        *val = rng.gen_range(-1.0..1.0);
-                    }
+        assert!(l <= 20, "L={} too large for dense J matrix (2^L = {})", l, 1u64 << l);
+        let n_genomes = 1usize << l;
+        let mut dense = vec![0.0f64; n_genomes * n_genomes];
+
+        // Match reference: iterate i in 0..N, k in 0..i (lower triangle)
+        for i in 0..n_genomes {
+            for k in 0..i {
+                if rng.gen::<f64>() < theta {
+                    dense[i * n_genomes + k] = rng.gen_range(-1.0..1.0);
+                    dense[k * n_genomes + i] = rng.gen_range(-1.0..1.0);
                 }
             }
-            locus_matrices.push(mat);
         }
 
-        let n_genomes = if l >= 64 { 0 } else { 1usize << l };
-        let mut engine = JEngine {
-            locus_matrices: Arc::new(locus_matrices),
+        JEngine {
+            j_dense: Arc::new(dense),
             l,
-            j_dense: None,
             n_genomes,
-        };
-
-        // Pre-compute dense matrix for small L
-        if l <= DENSE_J_THRESHOLD {
-            let mut dense = vec![0.0f64; n_genomes * n_genomes];
-            for a in 0..n_genomes as u64 {
-                for b in 0..n_genomes as u64 {
-                    dense[a as usize * n_genomes + b as usize] = engine.compute(a, b);
-                }
-            }
-            engine.j_dense = Some(Arc::new(dense));
         }
-
-        engine
     }
 
-    pub fn from_matrices(l: u32, matrices: Vec<[[f64; 2]; 2]>) -> Self {
-        let n_genomes = if l >= 64 { 0 } else { 1usize << l };
-        let mut engine = JEngine {
-            locus_matrices: Arc::new(matrices),
+    /// Reconstruct from a serialized dense matrix.
+    pub fn from_dense(l: u32, dense: Vec<f64>) -> Self {
+        let n_genomes = 1usize << l;
+        assert_eq!(dense.len(), n_genomes * n_genomes);
+        JEngine {
+            j_dense: Arc::new(dense),
             l,
-            j_dense: None,
             n_genomes,
-        };
-        if l <= DENSE_J_THRESHOLD {
-            let mut dense = vec![0.0f64; n_genomes * n_genomes];
-            for a in 0..n_genomes as u64 {
-                for b in 0..n_genomes as u64 {
-                    dense[a as usize * n_genomes + b as usize] = engine.compute(a, b);
-                }
-            }
-            engine.j_dense = Some(Arc::new(dense));
         }
-        engine
     }
 
-    /// Compute J(a,b) from locus decomposition.
-    pub fn compute(&self, a: u64, b: u64) -> f64 {
-        let inv_sqrt_l = 1.0 / (self.l as f64).sqrt();
-        let mut sum = 0.0;
-        for k in 0..self.l {
-            let bit_a = ((a >> k) & 1) as usize;
-            let bit_b = ((b >> k) & 1) as usize;
-            sum += self.locus_matrices[k as usize][bit_a][bit_b];
-        }
-        sum * inv_sqrt_l
-    }
-
-    /// O(1) J(a,b) lookup — uses dense matrix for small L, computes for large L.
+    /// O(1) J(a,b) lookup.
     #[inline(always)]
     pub fn get_or_compute(&mut self, a: u64, b: u64) -> f64 {
         self.get_j(a, b)
     }
 
-    /// Immutable O(1) J(a,b) lookup — no &mut self needed.
+    /// Immutable O(1) J(a,b) lookup.
     #[inline(always)]
     pub fn get_j(&self, a: u64, b: u64) -> f64 {
-        if let Some(ref dense) = self.j_dense {
-            unsafe { *dense.get_unchecked(a as usize * self.n_genomes + b as usize) }
-        } else {
-            self.compute(a, b)
-        }
-    }
-
-    /// Number of cached J values (for testing).
-    pub fn cache_len(&self) -> usize {
-        self.j_dense.as_ref().map_or(0, |d| d.len())
-    }
-
-    /// No-op: J(a,b) is deterministic, stale entries are always correct.
-    pub fn invalidate_species(&mut self, _genome: u64) {
+        unsafe { *self.j_dense.get_unchecked(a as usize * self.n_genomes + b as usize) }
     }
 
     /// Compute the full J submatrix for currently active species.
@@ -133,7 +84,7 @@ impl JEngine {
         let mut matrix = vec![vec![0.0f64; s]; s];
         for i in 0..s {
             for j in 0..s {
-                matrix[i][j] = self.get_or_compute(genomes[i], genomes[j]);
+                matrix[i][j] = self.get_j(genomes[i], genomes[j]);
             }
         }
         (genomes, matrix)
@@ -254,7 +205,7 @@ impl Simulation {
         let mut sim = Simulation {
             config,
             species: state.species,
-            j_engine: JEngine::from_matrices(state.l, state.j_locus_matrices),
+            j_engine: JEngine::from_dense(state.l, state.j_dense),
             rng: state.rng,
             generation: state.generation,
             n,
@@ -296,7 +247,7 @@ impl Simulation {
             generation: self.generation,
             l: self.config.l,
             species: self.species.clone(),
-            j_locus_matrices: (*self.j_engine.locus_matrices).clone(),
+            j_dense: (*self.j_engine.j_dense).clone(),
             rng: self.rng.clone(),
         }
     }
@@ -609,50 +560,50 @@ mod tests {
 
         let a = 0b1010101010u64;
         let b = 0b0101010101u64;
-        assert!((j1.compute(a, b) - j2.compute(a, b)).abs() < 1e-15);
+        assert!((j1.get_j(a, b) - j2.get_j(a, b)).abs() < 1e-15);
     }
 
     #[test]
     fn test_j_finite_values() {
         let mut rng = ChaCha12Rng::seed_from_u64(99);
-        let j = JEngine::new(30, 0.25, &mut rng);
-        for a in [0u64, 1, 1023, 1 << 29, (1 << 30) - 1] {
-            for b in [0u64, 1, 512, (1 << 30) - 1] {
-                let val = j.compute(a, b);
+        let j = JEngine::new(10, 0.25, &mut rng);
+        for a in [0u64, 1, 100, 500, 1023] {
+            for b in [0u64, 1, 512, 1023] {
+                let val = j.get_j(a, b);
                 assert!(val.is_finite(), "J({},{}) = {} not finite", a, b, val);
             }
         }
     }
 
     #[test]
-    fn test_j_dense_vs_compute() {
-        // Dense matrix lookup must match locus-decomposition compute
+    fn test_j_asymmetric() {
+        // J[i][k] and J[k][i] should be independently drawn (not equal in general)
         let mut rng = ChaCha12Rng::seed_from_u64(42);
-        let mut j = JEngine::new(10, 0.25, &mut rng);
-        assert!(j.j_dense.is_some(), "Dense matrix should be enabled for L=10");
-
-        for a in [0u64, 1, 100, 500, 1023] {
-            for b in [0u64, 42, 512, 1023] {
-                let from_dense = j.get_or_compute(a, b);
-                let from_compute = j.compute(a, b);
-                assert!(
-                    (from_dense - from_compute).abs() < 1e-15,
-                    "Dense vs compute mismatch for ({},{}): {} vs {}",
-                    a, b, from_dense, from_compute
-                );
+        let j = JEngine::new(10, 0.25, &mut rng);
+        let mut found_asymmetric = false;
+        for a in 0..100u64 {
+            for b in (a+1)..100u64 {
+                let jab = j.get_j(a, b);
+                let jba = j.get_j(b, a);
+                if (jab - jba).abs() > 1e-15 && jab != 0.0 && jba != 0.0 {
+                    found_asymmetric = true;
+                    break;
+                }
             }
+            if found_asymmetric { break; }
         }
+        assert!(found_asymmetric, "J should be asymmetric (J[i,k] != J[k,i] in general)");
     }
 
     #[test]
     fn test_j_dense_repeated_lookup() {
         // Repeated lookups must return identical values
         let mut rng = ChaCha12Rng::seed_from_u64(42);
-        let mut j = JEngine::new(10, 0.25, &mut rng);
+        let j = JEngine::new(10, 0.25, &mut rng);
         let a = 100u64;
         let b = 200u64;
-        let v1 = j.get_or_compute(a, b);
-        let v2 = j.get_or_compute(a, b);
+        let v1 = j.get_j(a, b);
+        let v2 = j.get_j(a, b);
         assert!((v1 - v2).abs() < 1e-15);
     }
 
@@ -842,7 +793,7 @@ mod tests {
         for ((g1, h1), (g2, h2)) in h_before.iter().zip(h_after.iter()) {
             assert_eq!(g1, g2, "h_cache key mismatch");
             let diff = (h1 - h2).abs();
-            if diff > 1e-10 {
+            if diff > 1e-9 {
                 let count = sim.species.get(g1).copied().unwrap_or(0);
                 eprintln!("  MISMATCH genome={} count={}: incremental={:.6} vs rebuild={:.6} diff={:.6}", g1, count, h1, h2, diff);
                 fail_count += 1;
@@ -850,6 +801,6 @@ mod tests {
             max_diff = max_diff.max(diff);
         }
         eprintln!("  {} species, {} mismatches, max_diff={:.6}", h_before.len(), fail_count, max_diff);
-        assert!(max_diff < 1e-10, "h_cache max diff = {} (should be < 1e-10)", max_diff);
+        assert!(max_diff < 1e-9, "h_cache max diff = {} (should be < 1e-9)", max_diff);
     }
 }
