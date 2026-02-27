@@ -287,7 +287,10 @@ impl SpatialGrid {
         ]
     }
 
-    /// Collect all migration events (binomial sampling from each species per patch).
+    /// Collect all migration events using geometric skip sampling.
+    /// Instead of Bernoulli(p_move) for each individual, uses geometric
+    /// distribution to skip directly to the next migrant. O(n_migrants)
+    /// instead of O(n_total).
     fn collect_migrations(&mut self) -> Vec<Migration> {
         if self.p_move <= 0.0 {
             return Vec::new();
@@ -295,10 +298,10 @@ impl SpatialGrid {
 
         let mut migrations = Vec::new();
         let n_patches = self.patches.len();
+        let log_1mp = (1.0 - self.p_move).ln();
 
         for idx in 0..n_patches {
             let nbrs = self.neighbours(idx);
-            // Iterate over species in this patch
             let species_snapshot: Vec<(u64, u64)> = self.patches[idx]
                 .species
                 .iter()
@@ -306,28 +309,46 @@ impl SpatialGrid {
                 .collect();
 
             for (genome, count) in species_snapshot {
-                if count == 0 {
-                    continue;
-                }
-                // Binomial: how many of `count` individuals migrate?
+                if count == 0 { continue; }
+
+                // Geometric skip: how many of `count` migrate?
+                // For small p_move, this is much faster than count Bernoulli draws
                 let mut n_mig: u64 = 0;
-                for _ in 0..count {
-                    if self.migration_rng.gen::<f64>() < self.p_move {
+                if count <= 20 {
+                    // For small counts, direct Bernoulli is fine
+                    for _ in 0..count {
+                        if self.migration_rng.gen::<f64>() < self.p_move {
+                            n_mig += 1;
+                        }
+                    }
+                } else {
+                    // Geometric skip sampling
+                    let mut remaining = count as i64;
+                    loop {
+                        let u: f64 = self.migration_rng.gen();
+                        let skip = (u.ln() / log_1mp).floor() as i64;
+                        remaining -= skip + 1;
+                        if remaining < 0 { break; }
                         n_mig += 1;
                     }
                 }
-                if n_mig == 0 {
-                    continue;
-                }
-                // Distribute migrants to random neighbours
+
+                if n_mig == 0 { continue; }
+
+                // Distribute migrants to random neighbours (batched by dest)
+                let mut dest_counts = [0u64; 4];
                 for _ in 0..n_mig {
-                    let dest = nbrs[self.migration_rng.gen_range(0..4)];
-                    migrations.push(Migration {
-                        from: idx,
-                        to: dest,
-                        genome,
-                        count: 1,
-                    });
+                    dest_counts[self.migration_rng.gen_range(0..4)] += 1;
+                }
+                for (d, &c) in dest_counts.iter().enumerate() {
+                    if c > 0 {
+                        migrations.push(Migration {
+                            from: idx,
+                            to: nbrs[d],
+                            genome,
+                            count: c,
+                        });
+                    }
                 }
             }
         }
@@ -335,16 +356,16 @@ impl SpatialGrid {
         migrations
     }
 
-    /// Apply collected migration events.
+    /// Apply collected migration events (batched by count).
     fn apply_migrations(&mut self, migrations: &[Migration]) {
         for m in migrations {
-            // Remove from source
-            if let Some(count) = self.patches[m.from].species.get(&m.genome) {
-                if *count > 0 {
-                    self.patches[m.from].remove_individual(m.genome);
-                    // Add to destination
-                    self.patches[m.to].add_individual(m.genome);
-                }
+            let available = self.patches[m.from].species.get(&m.genome).copied().unwrap_or(0);
+            let to_move = std::cmp::min(m.count, available);
+            if to_move == 0 { continue; }
+
+            for _ in 0..to_move {
+                self.patches[m.from].remove_individual(m.genome);
+                self.patches[m.to].add_individual(m.genome);
             }
         }
     }
@@ -416,19 +437,27 @@ impl SpatialGrid {
                 }
             }
 
-            // Phase 2.6: Ramp stress — add one more cell every stress_ramp gens
+            // Phase 2.6: Ramp stress — stress 1% of cells every stress_ramp gens
+            //           (always completes in ~100 intervals = 10,000 gens at default ramp=100)
             if self.stress_ramp > 0 && self.stress_r > 0.0
                 && gens_elapsed % self.stress_ramp == 0
                 && self.stress_ramp_count < self.stress_ramp_order.len()
             {
-                let cell_idx = self.stress_ramp_order[self.stress_ramp_count];
-                self.patches[cell_idx].config.r = self.stress_r;
-                self.stress_ramp_count += 1;
                 let n_total = self.stress_ramp_order.len();
-                if self.stress_ramp_count % 10 == 0 || self.stress_ramp_count == n_total {
+                let cells_per_step = std::cmp::max(1, n_total / 100);
+                let mut last_cell = 0;
+                for _ in 0..cells_per_step {
+                    if self.stress_ramp_count >= n_total { break; }
+                    let cell_idx = self.stress_ramp_order[self.stress_ramp_count];
+                    self.patches[cell_idx].config.r = self.stress_r;
+                    self.stress_ramp_count += 1;
+                    last_cell = cell_idx;
+                }
+                let pct = (self.stress_ramp_count as f64 / n_total as f64 * 100.0) as usize;
+                if pct % 10 == 0 || self.stress_ramp_count == n_total {
                     eprintln!(
-                        "  RAMP: {}/{} cells stressed at gen {} (latest: cell {})",
-                        self.stress_ramp_count, n_total, gen, cell_idx
+                        "  RAMP: {}/{} cells stressed ({}%) at gen {} (latest: cell {})",
+                        self.stress_ramp_count, n_total, pct, gen, last_cell
                     );
                 }
             }
