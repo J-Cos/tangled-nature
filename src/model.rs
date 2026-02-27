@@ -458,6 +458,14 @@ impl Simulation {
             return Err("Population extinct before start".into());
         }
 
+        // Create/truncate output file if specified
+        let out_file = self.config.out_file.clone();
+        if !out_file.is_empty() {
+            if let Ok(f) = std::fs::File::create(&out_file) {
+                drop(f); // truncate and close
+            }
+        }
+
         let mut step: u64 = 0;
         let mut tau = std::cmp::max((self.n as f64 / self.config.p_kill).round() as u64, 1);
         let target_gen = self.generation + self.config.max_gen;
@@ -497,6 +505,15 @@ impl Simulation {
                     && self.generation % self.config.output_interval == 0
                 {
                     output::emit_snapshot(self.generation, self.n, self.species.len());
+                    // Write species data to file for visualization
+                    if !out_file.is_empty() {
+                        let species_vec: Vec<(u64, u64)> =
+                            self.species.iter().map(|(&g, &c)| (g, c)).collect();
+                        output::emit_snapshot_to_file(
+                            &out_file, self.generation, self.n,
+                            self.species.len(), &species_vec,
+                        );
+                    }
                 }
 
                 // qESS check — only after enough generations since THIS run started
@@ -505,6 +522,19 @@ impl Simulation {
                     if let Some(cv) = self.qess.push(self.n) {
                         if self.qess.is_qess(cv) {
                             self.emit_qess_data(cv);
+                            if !out_file.is_empty() {
+                                let species_vec: Vec<(u64, u64)> =
+                                    self.species.iter().map(|(&g, &c)| (g, c)).collect();
+                                output::emit_qess_to_file(
+                                    &out_file, self.generation, self.n,
+                                    self.species.len(), cv,
+                                    &species_vec,
+                                );
+                                output::emit_final_to_file(
+                                    &out_file, self.generation, self.n,
+                                    self.species.len(), true,
+                                );
+                            }
                             output::emit_final(self.generation, self.n, self.species.len(), true);
                             return Ok(true);
                         }
@@ -519,6 +549,18 @@ impl Simulation {
         // Max generations reached without qESS — still emit data
         let final_cv = self.qess.push(self.n).unwrap_or(1.0);
         self.emit_qess_data(final_cv);
+        if !out_file.is_empty() {
+            let species_vec: Vec<(u64, u64)> =
+                self.species.iter().map(|(&g, &c)| (g, c)).collect();
+            output::emit_qess_to_file(
+                &out_file, self.generation, self.n,
+                self.species.len(), final_cv, &species_vec,
+            );
+            output::emit_final_to_file(
+                &out_file, self.generation, self.n,
+                self.species.len(), false,
+            );
+        }
         output::emit_final(self.generation, self.n, self.species.len(), false);
         Ok(false)
     }

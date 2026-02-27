@@ -58,6 +58,9 @@ fn main() {
         config.seed, config.l, config.w, config.r, config.p_kill, config.p_mut, config.max_gen
     );
 
+    let out_file = config.out_file.clone();
+    let no_viz = config.no_viz;
+
     let mut sim = if let Some(ref path) = config.state_in {
         match state::SimState::load(path) {
             Ok(s) => {
@@ -90,6 +93,22 @@ fn main() {
                 }
                 eprintln!("State saved to {}", path);
             }
+
+            // Run visualization (skip if --no-viz or no output file)
+            if !no_viz && !out_file.is_empty() {
+                use std::process::Command;
+                eprintln!("  Generating visualizations...");
+                let status = Command::new("python3")
+                    .arg("classic_viz.py")
+                    .arg(&out_file)
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {},
+                    Ok(_) | Err(_) => eprintln!("  Warning: Failed to run classic_viz.py"),
+                }
+                eprintln!("  Visualization complete!");
+            }
+
             if qess_reached {
                 eprintln!("qESS reached at gen {}", sim.generation);
                 process::exit(0);
