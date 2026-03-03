@@ -193,6 +193,20 @@ Tests whether the Tangled Nature Model's species abundance distributions conform
 - **Output**: Ensemble METE figure + quake analysis figure
 - **Run**: `bash experiments/mete_ensemble/run.sh`
 
+### Causal Emergence (`experiments/causal_emergence/`)
+
+Applies Erik Hoel's causal emergence framework to identify scales of maximum causal explanatory power in TNM dynamics. Computes effective information (EI = determinism − degeneracy) from empirical transition probability matrices at 4 hierarchical scales over sliding windows.
+
+| Scale  | Description                            |
+| ------ | -------------------------------------- |
+| Micro  | Top-10 species abundances (log-binned) |
+| Meso-1 | SAD shape (rank-abundance discretised) |
+| Meso-2 | (N, S) pair (binned)                   |
+| Macro  | Total N only                           |
+
+- **Output**: 4-panel figure (N/S dynamics, EI across scales, max-EI scale strip, determinism/degeneracy decomposition)
+- **Run**: `bash experiments/causal_emergence/run.sh`
+
 ## Source Layout
 
 ```
@@ -206,7 +220,8 @@ src/
 
 experiments/
 ├── harvest_forks/     # Species harvesting impact study
-└── mete_ensemble/     # METE conformance analysis
+├── mete_ensemble/     # METE conformance analysis
+└── causal_emergence/  # Multi-scale causal information analysis
 ```
 
 ## Tests
