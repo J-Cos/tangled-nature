@@ -184,6 +184,15 @@ Systematic study of how harvesting individual species at different abundance ran
 - **Output**: 5×3 panel figure (abundance/richness impacts by rank, trajectories, cross-metric analysis) + 4×1 genome heatmap figure
 - **Run**: `bash experiments/harvest_forks/run.sh`
 
+### METE Ensemble (`experiments/mete_ensemble/`)
+
+Tests whether the Tangled Nature Model's species abundance distributions conform to Maximum Entropy Theory of Ecology (METE) predictions. Runs 32 replicate simulations and compares empirical SADs against METE log-series predictions using KL divergence.
+
+- **Analysis**: Python preprocessing + R-based METE fitting (requires `meteR` package)
+- **Extended**: Quake-focused analysis tracks how METE conformance breaks down during population crashes
+- **Output**: Ensemble METE figure + quake analysis figure
+- **Run**: `bash experiments/mete_ensemble/run.sh`
+
 ## Source Layout
 
 ```
@@ -196,7 +205,8 @@ src/
 └── output.rs     # JSONL snapshot formatting
 
 experiments/
-└── harvest_forks/     # Species harvesting impact study
+├── harvest_forks/     # Species harvesting impact study
+└── mete_ensemble/     # METE conformance analysis
 ```
 
 ## Tests
