@@ -411,14 +411,16 @@ impl SpatialGrid {
 
         // Report ramp timeline if active
         if self.stress_ramp > 0 && self.stress_r > 0.0 {
-            let ramp_duration = n_patches * self.stress_ramp;
+            let cells_per_step = std::cmp::max(1, n_patches / 100);
+            let n_steps = (n_patches + cells_per_step - 1) / cells_per_step; // ceil division
+            let ramp_duration = n_steps * self.stress_ramp;
             let ramp_start = start_gen + self.stress_ramp_before;
             let ramp_end = ramp_start + ramp_duration;
             eprintln!(
-                "  RAMP PROTOCOL: baseline gens {}-{} | ramp {}-{} (R {:.1} → {:.2}, {} cells over {} gens) | hold {}-{}",
+                "  RAMP PROTOCOL: baseline gens {}-{} | ramp {}-{} (R {:.1} -> {:.2}, {} cells in {} steps of {} over {} gens) | hold {}-{}",
                 start_gen, ramp_start,
                 ramp_start, ramp_end,
-                self.original_r, self.stress_r, n_patches, ramp_duration,
+                self.original_r, self.stress_r, n_patches, n_steps, cells_per_step, ramp_duration,
                 ramp_end, target_gen
             );
         }
