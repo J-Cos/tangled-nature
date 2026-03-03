@@ -14,6 +14,7 @@ pub struct Config {
     pub r: f64,
     pub p_mut: f64,
     pub output_interval: usize,
+    pub species_interval: usize,  // interval for species-level output (0 = same as output_interval)
     pub qess_window: usize,
     pub qess_threshold: f64,
     pub state_in: Option<String>,
@@ -34,6 +35,10 @@ pub struct Config {
     pub stress_sigma: f64,                // contagion spread parameter (grid units)
     pub no_viz: bool,
     pub independent_init: bool,  // each patch gets its own random species pool
+    // Harvesting (non-spatial)
+    pub harvest_genome: Option<u64>,  // genome to harvest (None = disabled)
+    pub harvest_rate: f64,            // fraction to remove each gen (e.g. 0.25)
+    pub harvest_after: usize,         // start harvesting after this many gens elapsed
 }
 
 impl Config {
@@ -52,6 +57,7 @@ impl Config {
             r: 143.0,
             p_mut: 0.001,
             output_interval: 100,
+            species_interval: 0,
             qess_window: 5000,
             qess_threshold: 0.05,
             state_in: None,
@@ -70,6 +76,9 @@ impl Config {
             stress_sigma: 2.0,
             no_viz: false,
             independent_init: false,
+            harvest_genome: None,
+            harvest_rate: 0.0,
+            harvest_after: 0,
         }
     }
 
@@ -91,6 +100,7 @@ impl Config {
                 "--r" => config.r = parse_next(&args, &mut i)?,
                 "--p-mut" => config.p_mut = parse_next(&args, &mut i)?,
                 "--output-interval" => config.output_interval = parse_next(&args, &mut i)?,
+                "--species-interval" => config.species_interval = parse_next(&args, &mut i)?,
                 "--qess-window" => config.qess_window = parse_next(&args, &mut i)?,
                 "--qess-threshold" => config.qess_threshold = parse_next(&args, &mut i)?,
                 "--state-in" => config.state_in = Some(parse_next_str(&args, &mut i)?),
@@ -113,6 +123,9 @@ impl Config {
                 "--stress-ramp-after" => config.stress_ramp_after = parse_next(&args, &mut i)?,
                 "--stress-sigma" => config.stress_sigma = parse_next(&args, &mut i)?,
                 "--no-viz" => config.no_viz = true,
+                "--harvest-genome" => config.harvest_genome = Some(parse_next(&args, &mut i)?),
+                "--harvest-rate" => config.harvest_rate = parse_next(&args, &mut i)?,
+                "--harvest-after" => config.harvest_after = parse_next(&args, &mut i)?,
                 "--independent-init" => config.independent_init = true,
                 other => return Err(format!("Unknown argument: {}", other)),
             }

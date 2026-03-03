@@ -62,29 +62,33 @@ The primary workflow is to run a spatial metacommunity to qESS, checkpoint it, t
 
 ## CLI Parameters
 
-| Flag                 | Default                | Description                                         |
-| -------------------- | ---------------------- | --------------------------------------------------- |
-| `--seed`             | system time            | RNG seed for reproducibility                        |
-| `--l`                | 10                     | Genome length (bits); `2^L` possible genomes        |
-| `--n-init`           | 100                    | Initial population per patch                        |
-| `--max-gen`          | 200000                 | Maximum generations to run                          |
-| `--theta`            | 0.25                   | J matrix sparsity (fraction of non-zero entries)    |
-| `--p-kill`           | 0.2                    | Per-step kill probability                           |
-| `--w`                | 33.0                   | Interaction weight in fitness function              |
-| `--r`                | 143.0                  | Carrying capacity (stress target)                   |
-| `--p-mut`            | 0.001                  | Mutation rate per locus per reproduction            |
-| `--output-interval`  | 100                    | Generations between JSONL snapshots                 |
-| `--qess-window`      | 5000                   | Rolling window for qESS CV calculation              |
-| `--qess-threshold`   | 0.05                   | CV threshold for qESS detection                     |
-| `--state-in`         | —                      | Load simulation state from JSON checkpoint          |
-| `--state-out`        | —                      | Save state to JSON when qESS is reached             |
-| `--output-j`         | false                  | Dump J matrix to stdout                             |
-| `--spatial`          | false                  | Enable spatial metacommunity mode                   |
-| `--grid-size`        | 10                     | Grid width and height (grid is square)              |
-| `--p-move`           | 0.01                   | Per-individual migration probability per generation |
-| `--independent-init` | false                  | Each patch gets its own random initial species pool |
-| `--no-viz`           | false                  | Skip auto-visualization after spatial runs          |
-| `--out`              | `spatial_output.jsonl` | Output JSONL file path                              |
+| Flag                 | Default                | Description                                                          |
+| -------------------- | ---------------------- | -------------------------------------------------------------------- |
+| `--seed`             | system time            | RNG seed for reproducibility                                         |
+| `--l`                | 10                     | Genome length (bits); `2^L` possible genomes                         |
+| `--n-init`           | 100                    | Initial population per patch                                         |
+| `--max-gen`          | 200000                 | Maximum generations to run                                           |
+| `--theta`            | 0.25                   | J matrix sparsity (fraction of non-zero entries)                     |
+| `--p-kill`           | 0.2                    | Per-step kill probability                                            |
+| `--w`                | 33.0                   | Interaction weight in fitness function                               |
+| `--r`                | 143.0                  | Carrying capacity (stress target)                                    |
+| `--p-mut`            | 0.001                  | Mutation rate per locus per reproduction                             |
+| `--output-interval`  | 100                    | Generations between JSONL snapshots                                  |
+| `--species-interval` | 0                      | Interval for species-level file output (0 = same as output-interval) |
+| `--qess-window`      | 5000                   | Rolling window for qESS CV calculation                               |
+| `--qess-threshold`   | 0.05                   | CV threshold for qESS detection                                      |
+| `--state-in`         | —                      | Load simulation state from JSON checkpoint                           |
+| `--state-out`        | —                      | Save state to JSON when qESS is reached                              |
+| `--output-j`         | false                  | Dump J matrix to stdout                                              |
+| `--spatial`          | false                  | Enable spatial metacommunity mode                                    |
+| `--grid-size`        | 10                     | Grid width and height (grid is square)                               |
+| `--p-move`           | 0.01                   | Per-individual migration probability per generation                  |
+| `--independent-init` | false                  | Each patch gets its own random initial species pool                  |
+| `--no-viz`           | false                  | Skip auto-visualization after spatial runs                           |
+| `--harvest-genome`   | —                      | Genome ID to harvest (enables harvesting mode)                       |
+| `--harvest-rate`     | 0.0                    | Fraction of target species removed each generation                   |
+| `--harvest-after`    | 0                      | Generations to wait before harvesting begins                         |
+| `--out`              | `spatial_output.jsonl` | Output JSONL file path                                               |
 
 ## Fitness Function
 
@@ -149,7 +153,7 @@ python3 spatial_viz2.py burnin.jsonl
 | 1   | N time series · S time series · SAD (rank-abundance)      |
 | 2   | N histogram · Phase space (N vs S) · Population stability |
 
-Plus a standalone **TaNa heatmap** (`Figure_ClassicTNM_tana.png`) showing all `2^L` possible genomes (y-axis) × time (x-axis) with log-scale abundance coloring (paper-style, Jensen 2018).
+Plus a standalone **TaNa heatmap** showing all `2^L` possible genomes (y-axis) × time (x-axis) with log-scale abundance coloring (paper-style, Jensen 2018).
 
 **`spatial_viz.py` — Spatial structure (4×4 grid):**
 
@@ -168,6 +172,18 @@ Plus a standalone **TaNa heatmap** (`Figure_ClassicTNM_tana.png`) showing all `2
 | 2   | Patch-level SAD at 4 time points (rank-abundance with IQR)           |
 | 3   | Landscape SAD (log-log rank-abundance) · Species occupancy over time |
 
+## Experiments
+
+Three experiments are included in `experiments/`, each self-contained with analysis, tests, and visualisation:
+
+### Harvest Forks (`experiments/harvest_forks/`)
+
+Systematic study of how harvesting individual species at different abundance ranks affects community dynamics. Runs 32 independent burn-in simulations to qESS, then forks each into 32 harvesting scenarios (one per species rank), applying 25% harvest rate after 200 generations.
+
+- **Rust features used**: `--harvest-genome`, `--harvest-rate`, `--harvest-after`, `--species-interval`
+- **Output**: 5×3 panel figure (abundance/richness impacts by rank, trajectories, cross-metric analysis) + 4×1 genome heatmap figure
+- **Run**: `bash experiments/harvest_forks/run.sh`
+
 ## Source Layout
 
 ```
@@ -178,6 +194,9 @@ src/
 ├── spatial.rs    # SpatialGrid: 2D grid of patches with migration
 ├── state.rs      # SimState / SpatialState serialization
 └── output.rs     # JSONL snapshot formatting
+
+experiments/
+└── harvest_forks/     # Species harvesting impact study
 ```
 
 ## Tests

@@ -513,20 +513,47 @@ impl Simulation {
                 step = 0;
                 tau = std::cmp::max((self.n as f64 / self.config.p_kill).round() as u64, 1);
 
-                // Periodic snapshot
+                // --- Harvesting: remove fraction of target species ---
+                if let Some(target_g) = self.config.harvest_genome {
+                    let gens_elapsed = self.generation.saturating_sub(start_gen);
+                    if gens_elapsed >= self.config.harvest_after && self.config.harvest_rate > 0.0 {
+                        if let Some(count) = self.species.get(&target_g).copied() {
+                            let to_remove = (self.config.harvest_rate * count as f64).floor() as u64;
+                            if to_remove > 0 {
+                                let new_count = count.saturating_sub(to_remove);
+                                self.n -= count - new_count;
+                                if new_count == 0 {
+                                    self.species.remove(&target_g);
+                                } else {
+                                    self.species.insert(target_g, new_count);
+                                }
+                                self.h_dirty = true;
+                            }
+                        }
+                    }
+                }
+
+                // Periodic snapshot — stdout gets N/S only for monitoring
                 if self.config.output_interval > 0
                     && self.generation % self.config.output_interval == 0
                 {
                     output::emit_snapshot(self.generation, self.n, self.species.len());
-                    // Write species data to file for visualization
-                    if !out_file.is_empty() {
-                        let species_vec: Vec<(u64, u64)> =
-                            self.species.iter().map(|(&g, &c)| (g, c)).collect();
-                        output::emit_snapshot_to_file(
-                            &out_file, self.generation, self.n,
-                            self.species.len(), &species_vec,
-                        );
-                    }
+                }
+                // Species-level output to file (at species_interval, or output_interval if 0)
+                let sp_interval = if self.config.species_interval > 0 {
+                    self.config.species_interval
+                } else {
+                    self.config.output_interval
+                };
+                if !out_file.is_empty() && sp_interval > 0
+                    && self.generation % sp_interval == 0
+                {
+                    let species_vec: Vec<(u64, u64)> =
+                        self.species.iter().map(|(&g, &c)| (g, c)).collect();
+                    output::emit_snapshot_to_file(
+                        &out_file, self.generation, self.n,
+                        self.species.len(), &species_vec,
+                    );
                 }
 
                 // qESS check — only after enough generations since THIS run started
