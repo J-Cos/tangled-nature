@@ -137,13 +137,13 @@ Three visualization scripts generate comprehensive figures:
 
 ```bash
 # Single-patch dynamics + TaNa heatmap (auto-invoked unless --no-viz)
-python3 classic_viz.py output.jsonl
+python3 scripts/classic_viz.py output.jsonl
 
 # Spatial structure & diversity (auto-invoked for spatial runs)
-python3 spatial_viz.py burnin.jsonl
+python3 scripts/spatial_viz.py burnin.jsonl
 
 # Species-level analysis
-python3 spatial_viz2.py burnin.jsonl
+python3 scripts/spatial_viz2.py burnin.jsonl
 ```
 
 **`classic_viz.py` — Single-patch analysis (2×3 grid + TaNa heatmap):**
@@ -181,7 +181,7 @@ Three experiments are included in `experiments/`, each self-contained with analy
 Systematic study of how harvesting individual species at different abundance ranks affects community dynamics. Runs 32 independent burn-in simulations to qESS, then forks each into 32 harvesting scenarios (one per species rank), applying 25% harvest rate after 200 generations.
 
 - **Rust features used**: `--harvest-genome`, `--harvest-rate`, `--harvest-after`, `--species-interval`
-- **Output**: 5×3 panel figure (abundance/richness impacts by rank, trajectories, cross-metric analysis) + 4×1 genome heatmap figure
+- **Output**: 5×3 panel figure + 4×1 genome heatmap figure
 - **Run**: `bash experiments/harvest_forks/run.sh`
 
 ### METE Ensemble (`experiments/mete_ensemble/`)
@@ -210,18 +210,31 @@ Applies Erik Hoel's causal emergence framework to identify scales of maximum cau
 ## Source Layout
 
 ```
-src/
-├── main.rs       # CLI entry point, mode dispatch
-├── config.rs     # Parameter struct and --flag parsing
-├── model.rs      # Core TNM: JEngine, Simulation, QessDetector
-├── spatial.rs    # SpatialGrid: 2D grid of patches with migration
-├── state.rs      # SimState / SpatialState serialization
-└── output.rs     # JSONL snapshot formatting
+src/                           ← Rust source
+├── main.rs                    # CLI entry point, mode dispatch
+├── config.rs                  # Parameter struct and --flag parsing
+├── model.rs                   # Core TNM: JEngine, Simulation, QessDetector
+├── spatial.rs                 # SpatialGrid: 2D grid of patches with migration
+├── state.rs                   # SimState / SpatialState serialization
+└── output.rs                  # JSONL snapshot formatting
 
-experiments/
-├── harvest_forks/     # Species harvesting impact study
-├── mete_ensemble/     # METE conformance analysis
-└── causal_emergence/  # Multi-scale causal information analysis
+scripts/                       ← Core tooling (auto-invoked by binary)
+├── classic_viz.py             # Single-patch visualization
+├── spatial_viz.py             # Spatial structure & diversity
+├── spatial_viz2.py            # Species-level spatial analysis
+└── ensemble_run.py            # Parallel replicate runner
+
+experiments/                   ← Self-contained experiments
+├── harvest_forks/             # Species harvesting impact study
+├── mete_ensemble/             # METE conformance analysis
+├── causal_emergence/          # Multi-scale causal information analysis
+├── adiabatic_hysteresis/      # Adiabatic stress protocol (EVO vs ECO)
+├── forked_quench/             # Forked quench experiment
+├── pulse_perturbation/        # Pulse perturbation experiment
+└── species_removal/           # Species removal experiment
+
+tests/                         ← Integration tests
+reference/                     ← Reference implementation (von Stengel 2020)
 ```
 
 ## Tests
@@ -284,7 +297,7 @@ Single-patch mode is inherently sequential (each micro-step depends on the previ
 | After optimization                | 4.6s      |
 | **Speedup**                       | **2.15×** |
 
-For multi-core speedup on single-patch workloads, run independent replicates in parallel (e.g., via `ensemble_run.py`).
+For multi-core speedup on single-patch workloads, run independent replicates in parallel (e.g., via `scripts/ensemble_run.py`).
 
 ## Citation
 

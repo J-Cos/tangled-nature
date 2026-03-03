@@ -567,7 +567,7 @@ impl SpatialGrid {
         if !self.no_viz {
         eprintln!("  Generating visualizations...");
         let out = &self.out_file;
-        for script in &["spatial_viz.py", "spatial_viz2.py"] {
+        for script in &["scripts/spatial_viz.py", "scripts/spatial_viz2.py"] {
             let status = Command::new("python3")
                 .arg(script)
                 .arg(out)

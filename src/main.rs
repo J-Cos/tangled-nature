@@ -99,12 +99,12 @@ fn main() {
                 use std::process::Command;
                 eprintln!("  Generating visualizations...");
                 let status = Command::new("python3")
-                    .arg("classic_viz.py")
+                    .arg("scripts/classic_viz.py")
                     .arg(&out_file)
                     .status();
                 match status {
                     Ok(s) if s.success() => {},
-                    Ok(_) | Err(_) => eprintln!("  Warning: Failed to run classic_viz.py"),
+                    Ok(_) | Err(_) => eprintln!("  Warning: Failed to run scripts/classic_viz.py"),
                 }
                 eprintln!("  Visualization complete!");
             }
